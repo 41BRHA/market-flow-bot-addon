@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Market Flow Map</title>
+<style>
+  :root{
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+    --bg:#0e1116; --panel:#151a22; --ink:#e8edf4; --muted:#8b97a8;
+    --line:#232b36; --in:#22c98a; --out:#ef5b6b; --hub:#3a4356; --hubink:#e8edf4;
+    --accent:#4c8dff;
+    --shadow:0 6px 24px rgba(0,0,0,.35);
+  }
+  :root:not([data-theme="dark"]){
+    --bg:#f4f6fa; --panel:#ffffff; --ink:#101623; --muted:#5b6675;
+    --line:#e3e8f0; --in:#12a56f; --out:#e0384a; --hub:#dfe5ee; --hubink:#101623;
+    --accent:#2f6bff;
+    --shadow:0 6px 20px rgba(20,30,50,.10);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; min-height:100vh;
+  }
+  .wrap{max-width:1000px; margin:0 auto; padding:14px 14px 28px}
+  header{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px}
+  h1{font-size:16px; font-weight:650; letter-spacing:.2px; margin:0}
+  .sub{font-size:12px; color:var(--muted); margin-top:3px}
+  .hdot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:0px}
+  .toggle{
+    border:1px solid var(--line); background:var(--panel); color:var(--ink);
+    border-radius:999px; padding:7px 12px; font-size:13px; cursor:pointer; display:flex; gap:6px; align-items:center;
+  }
+  .map{width:100%; aspect-ratio:1/1}
+  .mainrow{display:flex; gap:14px; align-items:flex-start; margin-top:6px}
+  .map{flex:1 1 auto; min-width:0}
+  .events-panel{flex:0 0 268px; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px 12px 10px}
+  .ev-head{font-size:12px; font-weight:700; color:var(--muted); letter-spacing:.3px; margin-bottom:8px}
+  .ev-list{display:flex; flex-direction:column}
+  .ev-row{display:flex; gap:9px; padding:8px 4px; border-bottom:1px solid var(--line)}
+  .ev-row:last-child{border-bottom:none}
+  .ev-row.next{border-left:3px solid var(--accent); padding-left:8px; margin-left:-4px; border-radius:4px}
+  .ev-time{font-size:12px; font-weight:750; color:var(--ink); min-width:46px}
+  .ev-title{font-size:12.5px; font-weight:600; line-height:1.25}
+  .ev-meta{font-size:10.5px; color:var(--muted); margin-top:3px}
+  .ev-empty{font-size:12px; color:var(--muted); padding:8px 4px}
+  .ev-foot{font-size:10px; color:var(--muted); margin-top:8px; opacity:.8}
+  @media (max-width:760px){ .mainrow{flex-direction:column} .events-panel{flex:none; width:auto} }
+  .controls{display:flex; gap:8px; align-items:center; margin-top:10px}
+  .pills{display:flex; gap:6px; overflow-x:auto; scrollbar-width:thin; -webkit-overflow-scrolling:touch; padding-bottom:2px}
+  .pills::-webkit-scrollbar{height:5px}
+  .pills::-webkit-scrollbar-thumb{background:var(--line); border-radius:3px}
+  .pill{flex:0 0 auto; border:1px solid var(--line); background:var(--panel); color:var(--muted);
+    border-radius:999px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap}
+  .pill:hover{color:var(--ink)}
+  .pill.on{background:var(--accent); color:#fff; border-color:var(--accent)}
+  .pill.custom{flex:0 0 auto; padding:6px 11px}
+  .daterow{display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-top:8px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 12px}
+  .daterow label{font-size:12px; color:var(--muted); display:flex; flex-direction:column; gap:4px}
+  .daterow input{border:1px solid var(--line); background:var(--bg); color:var(--ink);
+    border-radius:8px; padding:6px 8px; font-size:13px}
+  .applybtn{border:none; background:var(--accent); color:#fff; border-radius:8px; padding:8px 16px;
+    font-size:13px; font-weight:600; cursor:pointer}
+  .prevbanner{margin-top:8px; font-size:12px; color:#8a6d1a; background:#fff6e0; border:1px solid #f0dca0;
+    border-radius:8px; padding:7px 11px}
+  :root[data-theme="dark"] .prevbanner{color:#e0b64a; background:#2a2413; border-color:#4a3f1a}
+  svg{width:100%; height:100%; display:block; overflow:visible}
+  .arrow{stroke-linecap:round; transition:stroke-width .3s ease, opacity .2s}
+  .flow-dash{stroke-linecap:round; opacity:.9}
+  .node-pill{fill:var(--panel); stroke:var(--line); stroke-width:1}
+  .node-name{font-size:13px; font-weight:600; fill:var(--ink)}
+  .node-flow{font-size:12px; font-weight:700}
+  .flow-on-arrow{font-size:14px; font-weight:800; paint-order:stroke; stroke:var(--bg); stroke-width:3.5px; stroke-linejoin:round}
+  .cash-on-arrow{font-size:11px; font-weight:600; fill:var(--muted); paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round}
+  .ball-val{font-weight:750; paint-order:stroke; stroke:var(--bg); stroke-width:2.5px; stroke-linejoin:round}
+  .node-cash{font-size:10.5px; fill:var(--muted); font-weight:500}
+  .hub{fill:var(--hub)}
+  .hub-lbl{fill:var(--hubink); text-anchor:middle}
+  .hub-title{font-size:11px; letter-spacing:.6px; opacity:.7}
+  .hub-val{font-size:26px; font-weight:750}
+  .hub-cap{font-size:10px; opacity:.65}
+  .legend{display:flex; flex-wrap:wrap; gap:14px 18px; align-items:center; justify-content:center;
+    margin-top:6px; font-size:12px; color:var(--muted)}
+  .legend b{color:var(--ink); font-weight:600}
+  .dot{display:inline-block; width:10px; height:10px; border-radius:3px; vertical-align:-1px; margin-right:5px}
+  .note{max-width:640px; margin:10px auto 0; text-align:center; font-size:11.5px; color:var(--muted); line-height:1.5}
+  g.sector{cursor:default}
+  g.sector.dim{opacity:.28}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div style="display:flex; align-items:center; gap:10px">
+      <button id="backBtn" class="toggle" style="display:none" onclick="backToMain()">← Back</button>
+      <div>
+        <h1 id="h1">Market Flow Map</h1>
+        <div class="sub" id="statusline"><span class="hdot" id="hdot"></span><span id="statustxt">…</span></div>
+      </div>
+    </div>
+    <button class="toggle" id="themeBtn" aria-label="Toggle theme">🌙 <span id="themeLbl">Dark</span></button>
+  </header>
+
+  <div class="controls" id="controls">
+    <div class="pills" id="pills"></div>
+    <button class="pill custom" id="customBtn">📅</button>
+  </div>
+  <div class="prevbanner" id="prevbanner" hidden>⚠ preview data — live only on <b>Live</b>; historical periods arrive with the data backend</div>
+  <div class="daterow" id="daterow" hidden>
+    <label>From <input type="date" id="fromD"></label>
+    <label>To <input type="date" id="toD"></label>
+    <button class="applybtn" id="applyBtn">Apply</button>
+  </div>
+
+  <div class="mainrow">
+    <div class="map"><svg id="svg" viewBox="0 0 1000 1000" role="img" aria-label="Radial sector money-flow map"></svg></div>
+    <aside class="events-panel">
+      <div class="ev-head" id="evHead">Today · high-impact</div>
+      <div id="evList" class="ev-list"><div class="ev-empty">loading…</div></div>
+      <div class="ev-foot" id="evFoot"></div>
+    </aside>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot" style="background:var(--in)"></span><b>Inflow</b> — money in</span>
+    <span><span class="dot" style="background:var(--out)"></span><b>Outflow</b> — money out</span>
+    <span>arrow thickness = conviction</span>
+    <span>end ball size = total money in the sector</span>
+    <span>labels = flow ratio (−1…+1) &amp; net $</span>
+  </div>
+  <p class="note">
+    “Net flow” is signed dollar-volume (price × shares, signed by up/down bars) — the scale and direction of money
+    changing hands, <b>not</b> a literal figure of new capital entering. The ratio (−1…+1) shows conviction; the hub sums every sector.
+  </p>
+</div>
+
+<script>
+/* No mock data — only Live shows real bot data; other periods show an empty state. */
+
+/* ---- fetch health (live bot will publish these). ---- */
+const STATUS={fetched:0, total:0, updated:Date.now()};
+
+function renderStatus(){
+  const dot=document.getElementById('hdot'), txt=document.getElementById('statustxt');
+  const p=STATUS.total?STATUS.fetched/STATUS.total:0;
+  const hcol = p>=0.97?"var(--in)":p>=0.88?"#e0a83c":"var(--out)";
+  if(LOADING){ dot.style.background="var(--accent)"; txt.textContent=`${currentPeriod} · loading…`; return; }
+  if(currentPeriod==='Live'){
+    if(!LIVE_DATA){ dot.style.background="var(--muted)"; txt.textContent="Live · waiting for the bot's first cycle…"; return; }
+    dot.style.background=hcol;
+    const t=new Date(STATUS.updated), hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0');
+    const ago=Math.max(0,Math.round((Date.now()-STATUS.updated)/60000));
+    txt.textContent=`● LIVE · ${STATUS.fetched}/${STATUS.total} symbols · updated ${hh}:${mm} (${ago<1?"just now":ago+" min ago"})`;
+    return;
+  }
+  if(!current || !current.length){ dot.style.background="var(--muted)"; txt.textContent=`${currentPeriod} · ${PERIOD_ERR?("error: "+PERIOD_ERR):"no data"}`; return; }
+  dot.style.background=hcol;
+  txt.textContent=`${currentPeriod} · net flow over window · ${STATUS.fetched}/${STATUS.total} symbols`;
+}
+
+/* ---- period selector + mock data per period ---- */
+const PERIODS=['Live','1h','3h','6h','1d','3d','1w','2w','1m','3m','6m','1y','2y','3y','5y'];
+let currentPeriod='Live';
+let current=[];
+let LIVE_DATA=null, LIVE_STATUS=null, LOADING=false;
+
+async function setPeriod(key,label){
+  currentPeriod=label||key;
+  document.getElementById('prevbanner').hidden=true;
+  document.querySelectorAll('.pill').forEach(el=>el.classList.toggle('on', el.dataset.k===key));
+  if(key==='Live'){
+    LOADING=false;
+    current = LIVE_DATA || [];
+    if(LIVE_DATA && LIVE_STATUS) Object.assign(STATUS, LIVE_STATUS);
+    render(); renderStatus(); return;
+  }
+  // historical window (or custom "from_to") -> ask the backend to compute it
+  LOADING=true; current=[]; render(); renderStatus();
+  const url = key.includes('_')
+    ? `api/flow?from=${key.split('_')[0]}&to=${key.split('_')[1]}`
+    : `api/flow?period=${encodeURIComponent(key)}`;
+  try{
+    const r=await fetch(url,{cache:'no-store'});
+    const j=await r.json();
+    LOADING=false;
+    if(currentPeriod!==(label||key)) return;   // user switched away while loading
+    if(j.error || !j.sectors || !j.sectors.length){ current=[]; PERIOD_ERR=j.error||null; render(); renderStatus(); return; }
+    PERIOD_ERR=null;
+    current=j.sectors.map(x=>({name:x.sector, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1)}));
+    STATUS={fetched:j.fetched, total:j.total_symbols, updated:Date.parse(j.updated)||Date.now()};
+    render(); renderStatus();
+  }catch(e){ LOADING=false; current=[]; PERIOD_ERR="fetch failed"; render(); renderStatus(); }
+}
+let PERIOD_ERR=null;
+
+
+function escHtml(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function renderEvents(evs, updated){
+  const list=document.getElementById('evList'), head=document.getElementById('evHead'), foot=document.getElementById('evFoot');
+  if(evs===null){ list.innerHTML='<div class="ev-empty">calendar unavailable</div>'; foot.textContent=""; return; }
+  const now=Date.now(), today=new Date();
+  const isToday=d=>{const x=new Date(d); return x.getFullYear()===today.getFullYear()&&x.getMonth()===today.getMonth()&&x.getDate()===today.getDate();};
+  let rows=evs.filter(e=>e.datetime_utc && isToday(e.datetime_utc)), extra="";
+  if(!rows.length){ rows=evs.filter(e=>e.datetime_utc && Date.parse(e.datetime_utc)>now).slice(0,4); if(rows.length) extra=" · next up"; }
+  head.textContent = "High-impact (US)"+extra;
+  if(!rows.length){ list.innerHTML='<div class="ev-empty">No high-impact US events scheduled.</div>'; foot.textContent=updated?("updated "+new Date(updated).toLocaleDateString()):""; return; }
+  const nextIdx=rows.findIndex(e=>Date.parse(e.datetime_utc)>now);
+  list.innerHTML=rows.map((e,i)=>{
+    const t=new Date(e.datetime_utc), hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0');
+    const meta=[e.actual?("actual "+e.actual):"", e.forecast?("fc "+e.forecast):"", e.previous?("prev "+e.previous):""].filter(Boolean).join(" · ");
+    return `<div class="ev-row ${i===nextIdx?'next':''}"><div class="ev-time">${hh}:${mm}</div><div><div class="ev-title">${escHtml(e.title)}</div>${meta?`<div class="ev-meta">${meta}</div>`:''}</div></div>`;
+  }).join("");
+  foot.textContent = updated ? ("forecast/prev · actual fills in later · updated "+new Date(updated).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})) : "";
+}
+async function loadEvents(){
+  try{ const r=await fetch('api/events',{cache:'no-store'}); const j=await r.json(); renderEvents(j.events||[], j.updated); }
+  catch(e){ renderEvents(null); }
+}
+
+
+let VIEW='main', SECTOR_NAME=null, SECTOR_DATA=[];
+async function openSector(name){
+  VIEW='sector'; SECTOR_NAME=name; SECTOR_DATA=[];
+  document.getElementById('controls').style.display='none';
+  document.getElementById('daterow').hidden=true;
+  const ep=document.querySelector('.events-panel'); if(ep) ep.style.display='none';
+  document.getElementById('backBtn').style.display='';
+  document.getElementById('h1').textContent=name;
+  LOADING=true; render(); document.getElementById('statustxt').textContent=name+' · loading stocks…';
+  try{
+    const r=await fetch('api/sector?name='+encodeURIComponent(name),{cache:'no-store'});
+    const j=await r.json(); LOADING=false;
+    if(j.error || !j.stocks || !j.stocks.length){ SECTOR_DATA=[]; render(); document.getElementById('statustxt').textContent=name+' · no data'; return; }
+    SECTOR_DATA=j.stocks.map(x=>({name:x.ticker, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1), last:x.last, mp:x.maxpain, mpAt:x.maxpain_at}));
+    render();
+    const upd=j.updated?new Date(j.updated):null;
+    document.getElementById('statustxt').textContent=`${name} · ${j.stocks.length} stocks`+(upd?` · updated ${String(upd.getHours()).padStart(2,'0')}:${String(upd.getMinutes()).padStart(2,'0')}`:'');
+    document.getElementById('hdot').style.background='var(--in)';
+  }catch(e){ LOADING=false; SECTOR_DATA=[]; render(); document.getElementById('statustxt').textContent=name+' · fetch failed'; }
+}
+function backToMain(){
+  VIEW='main'; SECTOR_NAME=null;
+  document.getElementById('controls').style.display='';
+  const ep=document.querySelector('.events-panel'); if(ep) ep.style.display='';
+  document.getElementById('backBtn').style.display='none';
+  document.getElementById('h1').textContent='Market Flow Map';
+  render(); renderStatus();
+}
+
+async function loadLive(){
+  try{
+    const r=await fetch('api/flow',{cache:'no-store'});
+    if(!r.ok) return;
+    const j=await r.json();
+    if(j && j.sectors && j.sectors.length){
+      LIVE_DATA=j.sectors.map(x=>({name:x.sector, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1)}));
+      LIVE_STATUS={fetched:j.fetched, total:j.total_symbols, updated:Date.parse(j.updated)||Date.now()};
+      if(currentPeriod==='Live') setPeriod('Live');
+    }
+  }catch(e){}
+}
+
+function buildPills(){
+  const box=document.getElementById('pills'); box.innerHTML='';
+  PERIODS.forEach(k=>{
+    const b=document.createElement('button');
+    b.className='pill'; b.dataset.k=k; b.textContent=k;
+    b.onclick=()=>{document.getElementById('daterow').hidden=true; setPeriod(k);};
+    box.appendChild(b);
+  });
+}
+
+// custom date range
+document.getElementById('customBtn').onclick=()=>{
+  const r=document.getElementById('daterow'); r.hidden=!r.hidden;
+};
+document.getElementById('applyBtn').onclick=()=>{
+  const f=document.getElementById('fromD').value, t=document.getElementById('toD').value;
+  if(!f||!t){return;}
+  document.querySelectorAll('.pill').forEach(el=>el.classList.remove('on'));
+  setPeriod(`${f}_${t}`, `${f} → ${t}`);
+};
+
+const CX=500, CY=500, R=315, HUBR=92;
+const svg=document.getElementById('svg');
+const SVGNS="http://www.w3.org/2000/svg";
+const el=(n,a={})=>{const e=document.createElementNS(SVGNS,n);for(const k in a)e.setAttribute(k,a[k]);return e;};
+
+function fmtCash(v){
+  const s=v>=0?"+":"−"; const a=Math.abs(v);
+  if(a>=1e9) return s+"$"+(a/1e9).toFixed(1)+"B";
+  if(a>=1e6) return s+"$"+(a/1e6).toFixed(0)+"M";
+  return s+"$"+a.toFixed(0);
+}
+function fmtFlow(v){return (v>=0?"+":"")+v.toFixed(2);}
+function fmtTotal(v){v=Math.abs(v);
+  if(v>=1e9) return "$"+(v/1e9).toFixed(v>=1e10?0:1)+"B";
+  if(v>=1e6) return "$"+(v/1e6).toFixed(0)+"M";
+  return "$"+v.toFixed(0);}
+
+function render(){
+  svg.innerHTML="";
+  if(LOADING){
+    const a=el("text",{x:CX,y:CY,"text-anchor":"middle",fill:"var(--muted)","font-size":"18","font-weight":"600"}); a.textContent="Loading "+(VIEW==='sector'?SECTOR_NAME:currentPeriod)+"\u2026"; svg.appendChild(a);
+    return;
+  }
+  if(!current || !current.length){
+    const msg = currentPeriod==='Live'
+      ? "Waiting for the bot\u2019s first cycle\u2026"
+      : currentPeriod+" \u2014 historical view needs the data backend";
+    const hint = currentPeriod==='Live'
+      ? "(the bot computes during US market sessions)"
+      : "tap Live for real-time flow";
+    const a=el("text",{x:CX,y:CY-6,"text-anchor":"middle",fill:"var(--muted)","font-size":"20","font-weight":"600"}); a.textContent=msg; svg.appendChild(a);
+    const b=el("text",{x:CX,y:CY+22,"text-anchor":"middle",fill:"var(--muted)","font-size":"13"}); b.textContent=hint; svg.appendChild(b);
+    return;
+  }
+  const defs=el("defs");
+  [["mk-in","var(--in)"],["mk-out","var(--out)"]].forEach(([id,col])=>{
+    const m=el("marker",{id,viewBox:"0 0 10 10",refX:"7.5",refY:"5",markerWidth:"8",markerHeight:"8",orient:"auto-start-reverse"});
+    m.appendChild(el("path",{d:"M0,0 L10,5 L0,10 z",fill:col}));
+    defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  const rows=[...(VIEW==='sector'?SECTOR_DATA:current)].sort((a,b)=>b.flow-a.flow);
+  const n=rows.length;
+  const maxTotal=Math.max(...rows.map(r=>r.total));
+  let total=0;
+
+  rows.forEach((d,i)=>{
+    total+=d.cash;
+    const ang=(-90 + i*(360/n))*Math.PI/180;
+    const dirx=Math.cos(ang), diry=Math.sin(ang);
+    const inflow=d.flow>=0;
+    const col=inflow?"var(--in)":"var(--out)";
+    const w=5 + Math.abs(d.flow)*20;                 // line thickness (unchanged)
+
+    // arrowhead: base size kept, growth-with-flow cut to ~60% of before
+    const hLen  = 26 + Math.abs(d.flow)*40;
+    const hHalf = 16 + Math.abs(d.flow)*22;
+
+    // end ball, sized by total money across the sector's stocks
+    const rb = 9 + Math.sqrt(d.total/maxTotal)*24;
+
+    const x0=CX+dirx*(HUBR+8),  y0=CY+diry*(HUBR+8); // hub edge
+    const nx=CX+dirx*R,         ny=CY+diry*R;        // ball centre
+    const bex=nx-dirx*rb,       bey=ny-diry*rb;      // ball edge (facing hub)
+
+    // tip is the pointed end; shaft stops at head base
+    const tipx=inflow?bex:x0, tipy=inflow?bey:y0;
+    const hx=inflow?dirx:-dirx, hy=inflow?diry:-diry;
+    const bcx=tipx-hx*hLen, bcy=tipy-hy*hLen;         // head base centre
+    const lineA=inflow?[x0,y0]:[bcx,bcy];
+    const lineB=inflow?[bcx,bcy]:[bex,bey];
+
+    const g=el("g",{class:"sector"});
+    g.dataset.i=i;
+    g.appendChild(el("title",{},)).textContent =
+      `${d.name} · total ≈ ${fmtCash(d.total).replace('+','')} across its stocks`;
+
+    // shaft
+    g.appendChild(el("line",{x1:lineA[0],y1:lineA[1],x2:lineB[0],y2:lineB[1],
+      stroke:col,"stroke-width":w,"stroke-opacity":.62,class:"arrow"}));
+    // custom head
+    const px=-hy, py=hx;
+    g.appendChild(el("polygon",{points:
+      `${tipx},${tipy} ${bcx+px*hHalf},${bcy+py*hHalf} ${bcx-px*hHalf},${bcy-py*hHalf}`,
+      fill:col,"fill-opacity":.9}));
+    // subtle animated flow dash along the shaft
+    const dash=el("line",{x1:lineA[0],y1:lineA[1],x2:lineB[0],y2:lineB[1],stroke:col,
+      "stroke-width":Math.max(1.5,w*0.30),class:"flow-dash","stroke-dasharray":"2 20"});
+    dash.appendChild(el("animate",{attributeName:"stroke-dashoffset",
+      from: inflow?"44":"0", to: inflow?"0":"44", dur:(2.2-Math.abs(d.flow)*1.1).toFixed(2)+"s",repeatCount:"indefinite"}));
+    g.appendChild(dash);
+
+    // end ball (size = total money in the sector)
+    g.appendChild(el("circle",{cx:nx,cy:ny,r:rb,fill:col,"fill-opacity":.16,
+      stroke:col,"stroke-width":2.5,"stroke-opacity":.85,class:"ball"}));
+    // total value inside the ball
+    const fs=Math.max(9,Math.min(15,rb*0.52));
+    const bv=el("text",{x:nx,y:ny+fs*0.34,class:"ball-val","text-anchor":"middle",
+      fill:col,"font-size":fs});
+    bv.textContent=fmtTotal(d.total);
+    g.appendChild(bv);
+
+    // both labels ride the arrow: flow ratio + net $
+    const mx=(x0+nx)/2, my=(y0+ny)/2;
+    let rot=ang*180/Math.PI; if(rot>90 || rot<-90) rot+=180;
+    const ppx=-diry, ppy=dirx;
+    const o1=w/2+11, o2=w/2+27;
+    const pctx=mx+ppx*o1, pcty=my+ppy*o1;
+    const cshx=mx+ppx*o2, cshy=my+ppy*o2;
+    const pct=el("text",{x:pctx,y:pcty,class:"flow-on-arrow","text-anchor":"middle",fill:col,
+      transform:`rotate(${rot} ${pctx} ${pcty})`});
+    pct.textContent=fmtFlow(d.flow);
+    const csh=el("text",{x:cshx,y:cshy,class:"cash-on-arrow","text-anchor":"middle",
+      transform:`rotate(${rot} ${cshx} ${cshy})`});
+    csh.textContent="≈ "+fmtCash(d.cash);
+    g.appendChild(pct); g.appendChild(csh);
+
+    // node name: just outside the ball
+    const right=dirx>=0;
+    const lx=CX+dirx*(R+rb+13), ly=CY+diry*(R+rb+13);
+    const anchor=Math.abs(dirx)<0.25 ? "middle" : (right?"start":"end");
+    const name=el("text",{x:lx,y:ly+(d.last!=null?-2:4),class:"node-name","text-anchor":anchor});
+    name.textContent=d.name;
+    g.appendChild(name);
+    if(d.last!=null){ const lp=el("text",{x:lx,y:ly+13,class:"node-cash","text-anchor":anchor}); lp.textContent="$"+d.last; g.appendChild(lp); }
+    if(d.mp!=null){ const mp=el("text",{x:lx,y:ly+25,class:"node-cash","text-anchor":anchor,fill:"var(--accent)"}); mp.textContent="MP $"+d.mp; g.appendChild(mp); }
+    if(VIEW==='main'){ g.style.cursor='pointer'; g.addEventListener('click',()=>openSector(d.name)); }
+
+    g.addEventListener('pointerenter',()=>{document.querySelectorAll('g.sector').forEach(s=>{if(s!==g)s.classList.add('dim');});});
+    g.addEventListener('pointerleave',()=>{document.querySelectorAll('g.sector').forEach(s=>s.classList.remove('dim'));});
+    svg.appendChild(g);
+  });
+
+  // hub
+  svg.appendChild(el("circle",{cx:CX,cy:CY,r:HUBR,class:"hub"}));
+  const t1=el("text",{x:CX,y:CY-24,class:"hub-lbl hub-title"}); t1.textContent=(VIEW==='sector'?SECTOR_NAME.toUpperCase()+" · NET FLOW":"MARKET · NET FLOW");
+  const val=el("text",{x:CX,y:CY+8,class:"hub-lbl hub-val",fill:total>=0?"var(--in)":"var(--out)"});
+  val.textContent=fmtCash(total);
+  const t2=el("text",{x:CX,y:CY+30,class:"hub-lbl hub-cap"}); t2.textContent=(VIEW==='sector'?"its stocks":"today · all sectors");
+  svg.appendChild(t1); svg.appendChild(val); svg.appendChild(t2);
+}
+
+/* theme toggle */
+const root=document.documentElement, btn=document.getElementById('themeBtn'), lbl=document.getElementById('themeLbl');
+function applyTheme(t){root.setAttribute('data-theme',t);
+  btn.firstChild.textContent = t==='dark' ? "🌙 " : "☀️ ";
+  lbl.textContent = t==='dark' ? "Dark" : "Light";
+  try{localStorage.setItem('flowmap-theme',t);}catch(e){}
+  render();
+}
+btn.addEventListener('click',()=>applyTheme(root.getAttribute('data-theme')==='dark'?'light':'dark'));
+let saved='dark'; try{saved=localStorage.getItem('flowmap-theme')||'dark';}catch(e){}
+current=[];
+applyTheme(saved);
+buildPills();
+setPeriod('Live');
+loadLive();
+setInterval(loadLive, 60000);
+loadEvents();
+setInterval(loadEvents, 300000);
+</script>
+</body>
+</html>

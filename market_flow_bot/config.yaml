@@ -1,0 +1,126 @@
+name: Market Flow Bot
+version: "0.13.0"
+slug: market_flow_bot
+description: Live volume-flow rotation engine — money in/out of every GICS sector (top-30 constituents each) plus AI-infra, software, metals (futures) & miners, with tunable big-shift alerts into Home Assistant.
+url: "https://github.com/your/market-flow-bot"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: application
+boot: auto
+init: false
+homeassistant_api: true
+hassio_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:rotate-3d-variant
+panel_title: Flow Map
+options:
+  data_source: yahoo
+  poll_interval_seconds: 900
+  auto_constituents: true
+  top_n: 30
+  history_days: 180
+  ingress_port: 8099
+  sessions:
+    premarket: true
+    regular: true
+    postmarket: false
+  benchmark:
+    - SPY
+  sectors:
+    - {name: Technology, symbols: [], holdings_etf: XLK}
+    - {name: Financials, symbols: [], holdings_etf: XLF}
+    - {name: Energy, symbols: [], holdings_etf: XLE}
+    - {name: Health Care, symbols: [], holdings_etf: XLV}
+    - {name: Industrials, symbols: [], holdings_etf: XLI}
+    - {name: Consumer Discretionary, symbols: [], holdings_etf: XLY}
+    - {name: Consumer Staples, symbols: [], holdings_etf: XLP}
+    - {name: Utilities, symbols: [], holdings_etf: XLU}
+    - {name: Materials, symbols: [], holdings_etf: XLB}
+    - {name: Real Estate, symbols: [], holdings_etf: XLRE}
+    - {name: Communication Services, symbols: [], holdings_etf: XLC}
+    - {name: AI-Infra, symbols: [NVDA, AMD, AVGO, ANET, VRT, SMCI, MU, SMH, EQIX, DLR]}
+    - {name: Software, symbols: [IGV, MSFT, CRM, NOW, PANW, CRWD, ORCL, ADBE]}
+    - {name: AI Pure-Play, symbols: [NBIS, CRWV, IREN, APLD, CORZ, CIFR, OKLO, SMR, NNE, BE]}
+    - {name: Gold, symbols: ["GC=F"]}
+    - {name: Silver, symbols: ["SI=F"]}
+    - {name: Gold Miners, symbols: [NEM, AEM, WPM, FNV, GOLD, KGC, AU, GFI, RGLD, PAAS, AGI, HMY]}
+    - {name: Silver Miners, symbols: [WPM, PAAS, HL, CDE, AG, EXK, SVM, FSM]}
+  thresholds:
+    rel_ma_window: 20
+    recent_bars: 6
+    flow_return_pct: 1.0
+    volume_z: 2.5
+    rank_jump: 3
+    breadth_ma_window: 10
+    min_history: 30
+    percentile_alert: 98.0
+  alerts:
+    alert_on_summary: true
+    alert_on_flip: true
+    alert_on_strong: true
+    min_flip_ratio: 0.40
+    strong_ratio: 0.65
+    min_rvol: 1.0
+    min_density: 0.5
+    suppress_startup: true
+  cooldown_minutes: 30
+  summary_cooldown_minutes: 60
+  publish_sensor: true
+  notify:
+    ha_service: "notify.adam_mobile"
+    telegram_bot_token: ""
+    telegram_chat_id: ""
+  webull:
+    app_key: ""
+    app_secret: ""
+    region: "us"
+schema:
+  data_source: "list(yahoo|webull)"
+  poll_interval_seconds: int(15,3600)
+  auto_constituents: bool
+  top_n: int(5,100)
+  history_days: int(1,3650)
+  ingress_port: int(1024,65535)
+  sessions:
+    premarket: bool
+    regular: bool
+    postmarket: bool
+  benchmark:
+    - str
+  sectors:
+    - name: str
+      symbols:
+        - str
+      holdings_etf: str?
+  thresholds:
+    rel_ma_window: int(2,500)
+    recent_bars: int(1,100)
+    flow_return_pct: float
+    volume_z: float
+    rank_jump: int(1,50)
+    breadth_ma_window: int(2,500)
+    min_history: int(1,100000)
+    percentile_alert: float
+  alerts:
+    alert_on_summary: bool
+    alert_on_flip: bool
+    alert_on_strong: bool
+    min_flip_ratio: float
+    strong_ratio: float
+    min_rvol: float
+    min_density: float
+    suppress_startup: bool
+  cooldown_minutes: int(0,1440)
+  summary_cooldown_minutes: int(0,1440)
+  publish_sensor: bool
+  notify:
+    ha_service: str
+    telegram_bot_token: password?
+    telegram_chat_id: str?
+  webull:
+    app_key: password?
+    app_secret: password?
+    region: str?
