@@ -45,7 +45,12 @@ class BarStore:
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA journal_mode=WAL")
-        self._lock = threading.Lock()
+        # ONE connection shared across the main loop, the period-engine warm
+        # threads, the max-pain worker and each web request. A single reentrant
+        # lock serialises every DB call so concurrent access can't raise
+        # sqlite3 "bad parameter or other API misuse" (SQLITE_MISUSE). Reentrant
+        # so put_bars can call record_coverage while already holding it.
+        self._lock = threading.RLock()
         self._init()
 
     def _init(self) -> None:
@@ -74,17 +79,19 @@ class BarStore:
         rows = [(res, symbol, float(t), float(c), float(v))
                 for t, c, v in zip(epochs, df["close"].to_numpy(), df["volume"].to_numpy())
                 if pd.notna(c)]
-        self.conn.executemany("INSERT OR REPLACE INTO bars VALUES(?,?,?,?,?)", rows)
-        self.conn.commit()
-        if rows:
-            self.record_coverage(res, symbol, min(r[2] for r in rows), max(r[2] for r in rows))
+        with self._lock:
+            self.conn.executemany("INSERT OR REPLACE INTO bars VALUES(?,?,?,?,?)", rows)
+            self.conn.commit()
+            if rows:
+                self.record_coverage(res, symbol, min(r[2] for r in rows), max(r[2] for r in rows))
         return len(rows)
 
     def get_bars(self, res: str, symbol: str, start_ts: float, end_ts: float) -> pd.DataFrame:
-        cur = self.conn.execute(
-            "SELECT ts, close, volume FROM bars WHERE res=? AND symbol=? AND ts>=? AND ts<=? ORDER BY ts",
-            (res, symbol, start_ts, end_ts))
-        data = cur.fetchall()
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT ts, close, volume FROM bars WHERE res=? AND symbol=? AND ts>=? AND ts<=? ORDER BY ts",
+                (res, symbol, start_ts, end_ts))
+            data = cur.fetchall()
         if not data:
             return pd.DataFrame(columns=["close", "volume"])
         ts = pd.to_datetime([d[0] for d in data], unit="s", utc=True)
@@ -92,26 +99,28 @@ class BarStore:
 
     # ---- coverage / gap finding ----
     def coverage_of(self, res: str, symbol: str) -> list[tuple[float, float]]:
-        cur = self.conn.execute(
-            "SELECT start_ts, end_ts FROM coverage WHERE res=? AND symbol=? ORDER BY start_ts",
-            (res, symbol))
-        return [(r[0], r[1]) for r in cur.fetchall()]
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT start_ts, end_ts FROM coverage WHERE res=? AND symbol=? ORDER BY start_ts",
+                (res, symbol))
+            return [(r[0], r[1]) for r in cur.fetchall()]
 
     def record_coverage(self, res: str, symbol: str, start_ts: float, end_ts: float) -> None:
         """Add a fetched range and merge overlapping/adjacent intervals."""
         tol = RES_SECONDS.get(res, 300) * 1.5
-        intervals = self.coverage_of(res, symbol) + [(start_ts, end_ts)]
-        intervals.sort()
-        merged: list[list[float]] = []
-        for s, e in intervals:
-            if merged and s <= merged[-1][1] + tol:
-                merged[-1][1] = max(merged[-1][1], e)
-            else:
-                merged.append([s, e])
-        self.conn.execute("DELETE FROM coverage WHERE res=? AND symbol=?", (res, symbol))
-        self.conn.executemany("INSERT INTO coverage VALUES(?,?,?,?)",
-                              [(res, symbol, s, e) for s, e in merged])
-        self.conn.commit()
+        with self._lock:
+            intervals = self.coverage_of(res, symbol) + [(start_ts, end_ts)]
+            intervals.sort()
+            merged: list[list[float]] = []
+            for s, e in intervals:
+                if merged and s <= merged[-1][1] + tol:
+                    merged[-1][1] = max(merged[-1][1], e)
+                else:
+                    merged.append([s, e])
+            self.conn.execute("DELETE FROM coverage WHERE res=? AND symbol=?", (res, symbol))
+            self.conn.executemany("INSERT INTO coverage VALUES(?,?,?,?)",
+                                  [(res, symbol, s, e) for s, e in merged])
+            self.conn.commit()
 
     def missing_ranges(self, res: str, symbol: str, start_ts: float, end_ts: float) -> list[tuple[float, float]]:
         """Sub-ranges of [start,end] not yet fetched — exactly what to pull."""
@@ -132,8 +141,9 @@ class BarStore:
     def prune(self, res: str | None = None) -> None:
         import time
         now = time.time()
-        for r in ([res] if res else list(KEEP_DAYS)):
-            cutoff = now - KEEP_DAYS[r] * 86400
-            self.conn.execute("DELETE FROM bars WHERE res=? AND ts < ?", (r, cutoff))
-            self.conn.execute("DELETE FROM coverage WHERE res=? AND end_ts < ?", (r, cutoff))
-        self.conn.commit()
+        with self._lock:
+            for r in ([res] if res else list(KEEP_DAYS)):
+                cutoff = now - KEEP_DAYS[r] * 86400
+                self.conn.execute("DELETE FROM bars WHERE res=? AND ts < ?", (r, cutoff))
+                self.conn.execute("DELETE FROM coverage WHERE res=? AND end_ts < ?", (r, cutoff))
+            self.conn.commit()

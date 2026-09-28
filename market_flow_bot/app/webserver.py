@@ -53,9 +53,19 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/sector":
             if _ENGINE is None:
                 return self._send(200, b'{"error":"engine not ready"}', "application/json")
-            name = (parse_qs(urlparse(self.path).query).get("name") or [""])[0]
+            q = parse_qs(parsed.query)
+            name = (q.get("name") or [""])[0]
+            period = (q.get("period") or [None])[0]
+            frm = (q.get("from") or [None])[0]
+            to = (q.get("to") or [None])[0]
             try:
-                return self._send(200, json.dumps(_ENGINE.sector_detail(name)).encode(), "application/json")
+                start = end = None
+                if frm and to:
+                    from datetime import datetime, timezone
+                    start = datetime.fromisoformat(frm).replace(tzinfo=timezone.utc).timestamp()
+                    end = datetime.fromisoformat(to).replace(tzinfo=timezone.utc).timestamp()
+                snap = _ENGINE.sector_detail(name, period=period, start=start, end=end)
+                return self._send(200, json.dumps(snap).encode(), "application/json")
             except Exception as exc:  # noqa: BLE001
                 return self._send(200, json.dumps({"error": str(exc)}).encode(), "application/json")
         if path == "/api/flow":

@@ -215,20 +215,33 @@ class PeriodEngine:
     def compute(self, period=None, start=None, end=None) -> dict:
         return self._compute(period=period, start=start, end=end)
 
-    # ---- per-stock drill-down (unchanged) -------------------------------
-    def sector_detail(self, name, lookback_seconds=7200) -> dict:
-        """Per-stock last value + recent flow for one sector's constituents.
-        Reads the last ~2h of 5-min bars from the store (accumulated live)."""
+    # ---- per-stock drill-down (period-aware) ----------------------------
+    def sector_detail(self, name, period=None, start=None, end=None,
+                      lookback_seconds=7200) -> dict:
+        """Per-stock last value + flow for one sector's constituents.
+
+        `period`/`start`/`end` pick the window, matching whatever tab is on the
+        main map (1d, 3h, a custom range …). 'Live' (or nothing) keeps the old
+        behaviour: the last ~2h of 5-min bars. Reads are cache-only (the main
+        period view already fetched the bars), so this never blocks on Yahoo —
+        which also means the drill-down stays meaningful after the US close,
+        instead of collapsing every stock to $0 in an empty live window."""
         from .signals import _stock_flow
         sectors = self.get_sectors()
         sec = next((s for s in sectors if s.name == name), None)
         if sec is None:
             return {"sector": name, "stocks": [], "error": "unknown sector"}
         now = time.time()
-        s = now - lookback_seconds
+        if period in (None, "", "Live") and start is None and end is None:
+            s, e, res = now - lookback_seconds, now, "5m"
+            win_label = "live"
+        else:
+            s, e = self.window_for(period, start, end)
+            res = barstore.resolution_for(e - s)
+            win_label = period or f"{_iso(s)[:16]} to {_iso(e)[:16]}"
         stocks = []
         for sym in sec.symbols:
-            df = self.store.get_bars("5m", sym, s, now)
+            df = self.store.get_bars(res, sym, s, e)
             if df.empty:
                 stocks.append({"ticker": sym, "last": None, "flow": 0.0,
                                "net_dollar": 0, "gross": 0, "ts": None})
@@ -259,4 +272,5 @@ class PeriodEngine:
         stocks.sort(key=lambda x: x["flow"], reverse=True)
         for i, st in enumerate(stocks):
             st["rank"] = i + 1
-        return {"sector": name, "stocks": stocks, "updated": _iso(now)}
+        return {"sector": name, "stocks": stocks, "updated": _iso(e),
+                "period": win_label, "resolution": res}
