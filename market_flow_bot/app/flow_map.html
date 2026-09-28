@@ -50,6 +50,28 @@
   .ev-meta{font-size:10.5px; color:var(--muted); margin-top:3px}
   .ev-empty{font-size:12px; color:var(--muted); padding:8px 4px}
   .ev-foot{font-size:10px; color:var(--muted); margin-top:8px; opacity:.8}
+  /* day navigation + importance selector */
+  .ev-topbar{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px}
+  .ev-nav{border:1px solid var(--line); background:var(--panel); color:var(--ink);
+    border-radius:8px; width:28px; height:28px; font-size:16px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; flex:0 0 auto}
+  .ev-nav:hover{border-color:var(--accent); color:var(--accent)}
+  .ev-nav:disabled{opacity:.3; cursor:default}
+  .ev-day{font-size:12.5px; font-weight:750; color:var(--ink); text-align:center; flex:1 1 auto; line-height:1.2}
+  .ev-day small{display:block; font-size:10px; font-weight:500; color:var(--muted); margin-top:1px}
+  .ev-imp{display:flex; gap:6px; margin-bottom:10px}
+  .imp{flex:1 1 0; border:1px solid var(--line); background:var(--panel); color:var(--muted);
+    border-radius:8px; padding:5px 0; font-size:13px; letter-spacing:2px; cursor:pointer; text-align:center}
+  .imp:hover{color:var(--ink)}
+  .imp.on{background:var(--accent); color:#fff; border-color:var(--accent)}
+  .ev-dots{font-size:10px; letter-spacing:1px; margin-left:6px; vertical-align:1px}
+  .ev-dots.l3{color:var(--out)} .ev-dots.l2{color:#e0a83c} .ev-dots.l1{color:var(--muted)}
+  .ev-fap{display:flex; gap:12px; margin-top:5px}
+  .ev-fap .f{min-width:0}
+  .ev-fap .k{font-size:8.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); opacity:.75; font-weight:700}
+  .ev-fap .v{font-size:11.5px; font-weight:650; color:var(--ink); line-height:1.2}
+  .ev-fap .v.act{color:var(--accent)}
+  .ev-fap .v.dim{color:var(--muted); font-weight:500}
   @media (max-width:760px){ .mainrow{flex-direction:column} .events-panel{flex:none; width:auto} }
   .controls{display:flex; gap:8px; align-items:center; margin-top:10px}
   .pills{display:flex; gap:6px; overflow-x:auto; scrollbar-width:thin; -webkit-overflow-scrolling:touch; padding-bottom:2px}
@@ -121,7 +143,16 @@
   <div class="mainrow">
     <div class="map"><svg id="svg" viewBox="0 0 1000 1000" role="img" aria-label="Radial sector money-flow map"></svg></div>
     <aside class="events-panel">
-      <div class="ev-head" id="evHead">Today · high-impact</div>
+      <div class="ev-topbar">
+        <button class="ev-nav" id="evPrev" aria-label="Previous day">‹</button>
+        <div class="ev-day" id="evDay">Events</div>
+        <button class="ev-nav" id="evNext" aria-label="Next day">›</button>
+      </div>
+      <div class="ev-imp" id="evImp">
+        <button class="imp" data-lvl="1" title="All events (low, medium &amp; high)">•</button>
+        <button class="imp" data-lvl="2" title="Medium &amp; high">••</button>
+        <button class="imp on" data-lvl="3" title="High impact only">•••</button>
+      </div>
       <div id="evList" class="ev-list"><div class="ev-empty">loading…</div></div>
       <div class="ev-foot" id="evFoot"></div>
     </aside>
@@ -144,13 +175,13 @@
 /* No mock data — only Live shows real bot data; other periods show an empty state. */
 
 /* ---- fetch health (live bot will publish these). ---- */
-const STATUS={fetched:0, total:0, updated:Date.now()};
+let STATUS={fetched:0, total:0, updated:Date.now()};   // reassigned per period; must be `let`
 
 function renderStatus(){
   const dot=document.getElementById('hdot'), txt=document.getElementById('statustxt');
   const p=STATUS.total?STATUS.fetched/STATUS.total:0;
   const hcol = p>=0.97?"var(--in)":p>=0.88?"#e0a83c":"var(--out)";
-  if(LOADING){ dot.style.background="var(--accent)"; txt.textContent=`${currentPeriod} · loading…`; return; }
+  if(LOADING){ dot.style.background="var(--accent)"; txt.textContent=`${currentPeriod} · computing…`; return; }
   if(currentPeriod==='Live'){
     if(!LIVE_DATA){ dot.style.background="var(--muted)"; txt.textContent="Live · waiting for the bot's first cycle…"; return; }
     dot.style.background=hcol;
@@ -161,17 +192,25 @@ function renderStatus(){
   }
   if(!current || !current.length){ dot.style.background="var(--muted)"; txt.textContent=`${currentPeriod} · ${PERIOD_ERR?("error: "+PERIOD_ERR):"no data"}`; return; }
   dot.style.background=hcol;
-  txt.textContent=`${currentPeriod} · net flow over window · ${STATUS.fetched}/${STATUS.total} symbols`;
+  txt.textContent=`${currentPeriod} · net flow over window · ${STATUS.fetched}/${STATUS.total} symbols`
+                   + (STATUS.stale ? " · refreshing…" : "");
 }
 
-/* ---- period selector + mock data per period ---- */
-const PERIODS=['Live','1h','3h','6h','1d','3d','1w','2w','1m','3m','6m','1y','2y','3y','5y'];
-let currentPeriod='Live';
+/* ---- period selector ----
+   Tab order: 1d first (and the default view), then Live, then the rest. */
+const PERIODS=['1d','Live','1h','3h','6h','3d','1w','2w','1m','3m','6m','1y','2y','3y','5y'];
+let currentPeriod='1d';
+let currentKey='1d';
 let current=[];
 let LIVE_DATA=null, LIVE_STATUS=null, LOADING=false;
+let PERIOD_ERR=null;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
-async function setPeriod(key,label){
-  currentPeriod=label||key;
+/* setPeriod(key, label, silent)
+   silent=true -> refresh in place without wiping the current map to a spinner
+   (used by the background auto-refresh of whatever period is on screen). */
+async function setPeriod(key,label,silent){
+  currentPeriod=label||key; currentKey=key;
   document.getElementById('prevbanner').hidden=true;
   document.querySelectorAll('.pill').forEach(el=>el.classList.toggle('on', el.dataset.k===key));
   if(key==='Live'){
@@ -180,48 +219,117 @@ async function setPeriod(key,label){
     if(LIVE_DATA && LIVE_STATUS) Object.assign(STATUS, LIVE_STATUS);
     render(); renderStatus(); return;
   }
-  // historical window (or custom "from_to") -> ask the backend to compute it
-  LOADING=true; current=[]; render(); renderStatus();
+  // historical window (or custom "from_to") -> read the backend's cached snapshot.
+  const myPeriod = label||key;
+  if(!silent){ LOADING=true; current=[]; PERIOD_ERR=null; render(); renderStatus(); }
   const url = key.includes('_')
     ? `api/flow?from=${key.split('_')[0]}&to=${key.split('_')[1]}`
     : `api/flow?period=${encodeURIComponent(key)}`;
-  try{
-    const r=await fetch(url,{cache:'no-store'});
-    const j=await r.json();
+  let tries=0;
+  while(true){
+    tries++;
+    let j;
+    try{
+      const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(), 20000);
+      const r=await fetch(url,{cache:'no-store',signal:ctrl.signal});
+      j=await r.json(); clearTimeout(to);
+    }catch(e){
+      if(currentPeriod!==myPeriod) return;         // user switched away
+      if(silent){ renderStatus(); return; }         // keep old data on a silent refresh
+      LOADING=false; current=[]; PERIOD_ERR="request timed out — tap again"; render(); renderStatus(); return;
+    }
+    if(currentPeriod!==myPeriod) return;            // user switched away while waiting
+    // backend still computing this window for the first time -> poll a few times
+    if(j.pending){
+      if(silent) return;                            // don't nag during background refresh
+      if(tries>=20){ LOADING=false; current=[]; PERIOD_ERR="still computing — tap again in a moment"; render(); renderStatus(); return; }
+      LOADING=true; renderStatus();                 // keep the honest "computing…" state
+      await sleep(3000); continue;
+    }
     LOADING=false;
-    if(currentPeriod!==(label||key)) return;   // user switched away while loading
-    if(j.error || !j.sectors || !j.sectors.length){ current=[]; PERIOD_ERR=j.error||null; render(); renderStatus(); return; }
+    if(j.error || !j.sectors || !j.sectors.length){
+      if(silent) return;                            // keep old data rather than blanking
+      current=[]; PERIOD_ERR=j.error||null; render(); renderStatus(); return;
+    }
     PERIOD_ERR=null;
     current=j.sectors.map(x=>({name:x.sector, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1)}));
-    STATUS={fetched:j.fetched, total:j.total_symbols, updated:Date.parse(j.updated)||Date.now()};
+    STATUS={fetched:j.fetched, total:j.total_symbols, updated:Date.parse(j.updated)||Date.now(), stale:!!j.stale};
     render(); renderStatus();
-  }catch(e){ LOADING=false; current=[]; PERIOD_ERR="fetch failed"; render(); renderStatus(); }
+    return;
+  }
 }
-let PERIOD_ERR=null;
+
+/* keep whatever non-Live period is on screen quietly up to date */
+async function refreshCurrent(){
+  if(VIEW!=='main' || currentKey==='Live' || LOADING) return;
+  setPeriod(currentKey, currentPeriod, true);
+}
 
 
 function escHtml(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
-function renderEvents(evs, updated){
-  const list=document.getElementById('evList'), head=document.getElementById('evHead'), foot=document.getElementById('evFoot');
-  if(evs===null){ list.innerHTML='<div class="ev-empty">calendar unavailable</div>'; foot.textContent=""; return; }
-  const now=Date.now(), today=new Date();
-  const isToday=d=>{const x=new Date(d); return x.getFullYear()===today.getFullYear()&&x.getMonth()===today.getMonth()&&x.getDate()===today.getDate();};
-  let rows=evs.filter(e=>e.datetime_utc && isToday(e.datetime_utc)), extra="";
-  if(!rows.length){ rows=evs.filter(e=>e.datetime_utc && Date.parse(e.datetime_utc)>now).slice(0,4); if(rows.length) extra=" · next up"; }
-  head.textContent = "High-impact (US)"+extra;
-  if(!rows.length){ list.innerHTML='<div class="ev-empty">No high-impact US events scheduled.</div>'; foot.textContent=updated?("updated "+new Date(updated).toLocaleDateString()):""; return; }
-  const nextIdx=rows.findIndex(e=>Date.parse(e.datetime_utc)>now);
+/* ---- economic calendar: day navigation + importance (dot) filter ----
+   EV_LEVEL is the minimum importance shown: 3 = high only, 2 = medium+high,
+   1 = everything. Days are scrolled with the ‹ › arrows. */
+let EVENTS=[], EV_UPDATED=null, EV_DAYS=[], EV_DAYIDX=0, EV_LEVEL=3;
+
+const _dayKey=d=>{const x=new Date(d); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');};
+const _todayKey=()=>_dayKey(Date.now());
+function _dayLabel(key){
+  const [y,m,d]=key.split('-').map(Number); const dt=new Date(y,m-1,d);
+  const tk=_todayKey(), tmr=_dayKey(Date.now()+864e5), ytd=_dayKey(Date.now()-864e5);
+  const rel = key===tk?'Today' : key===tmr?'Tomorrow' : key===ytd?'Yesterday' : '';
+  const wd=dt.toLocaleDateString([], {weekday:'long'});
+  const dd=dt.toLocaleDateString([], {month:'short', day:'numeric'});
+  return {top: rel||wd, bot: rel?`${wd} · ${dd}`:dd};
+}
+
+function renderEvents(){
+  const list=document.getElementById('evList'), dayEl=document.getElementById('evDay'), foot=document.getElementById('evFoot');
+  const prev=document.getElementById('evPrev'), next=document.getElementById('evNext');
+  document.querySelectorAll('#evImp .imp').forEach(b=>b.classList.toggle('on', +b.dataset.lvl===EV_LEVEL));
+  if(EVENTS===null){ list.innerHTML='<div class="ev-empty">calendar unavailable</div>'; dayEl.textContent='Events'; foot.textContent=''; prev.disabled=next.disabled=true; return; }
+  if(!EV_DAYS.length){ list.innerHTML='<div class="ev-empty">No US events scheduled.</div>'; dayEl.textContent='Events'; foot.textContent=''; prev.disabled=next.disabled=true; return; }
+  EV_DAYIDX=Math.max(0,Math.min(EV_DAYIDX,EV_DAYS.length-1));
+  prev.disabled=EV_DAYIDX<=0; next.disabled=EV_DAYIDX>=EV_DAYS.length-1;
+  const key=EV_DAYS[EV_DAYIDX], lab=_dayLabel(key);
+  dayEl.innerHTML=`${escHtml(lab.top)}<small>${escHtml(lab.bot)}</small>`;
+  const now=Date.now();
+  const rows=EVENTS.filter(e=>e.datetime_utc && _dayKey(e.datetime_utc)===key && (e.level||3)>=EV_LEVEL);
+  if(!rows.length){
+    const tier=EV_LEVEL===3?'high-impact ':EV_LEVEL===2?'medium/high ':'';
+    list.innerHTML=`<div class="ev-empty">No ${tier}events this day.</div>`;
+    foot.textContent = EV_UPDATED?("updated "+new Date(EV_UPDATED).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})):"";
+    return;
+  }
+  const nextIdx=(key===_todayKey())?rows.findIndex(e=>Date.parse(e.datetime_utc)>now):-1;
+  const fld=(k,v,cls)=>`<div class="f"><div class="k">${k}</div><div class="v ${cls||''}">${v?escHtml(v):'—'}</div></div>`;
   list.innerHTML=rows.map((e,i)=>{
     const t=new Date(e.datetime_utc), hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0');
-    const meta=[e.actual?("actual "+e.actual):"", e.forecast?("fc "+e.forecast):"", e.previous?("prev "+e.previous):""].filter(Boolean).join(" · ");
-    return `<div class="ev-row ${i===nextIdx?'next':''}"><div class="ev-time">${hh}:${mm}</div><div><div class="ev-title">${escHtml(e.title)}</div>${meta?`<div class="ev-meta">${meta}</div>`:''}</div></div>`;
+    const lvl=e.level||3;
+    const fap=`<div class="ev-fap">${fld('Forecast',e.forecast)}${fld('Actual',e.actual,e.actual?'act':'dim')}${fld('Previous',e.previous)}</div>`;
+    return `<div class="ev-row ${i===nextIdx?'next':''}">`
+      +`<div class="ev-time">${hh}:${mm}</div>`
+      +`<div style="min-width:0;flex:1 1 auto"><div class="ev-title">${escHtml(e.title)}<span class="ev-dots l${lvl}">${'•'.repeat(lvl)}</span></div>${fap}</div>`
+      +`</div>`;
   }).join("");
-  foot.textContent = updated ? ("forecast/prev · actual fills in later · updated "+new Date(updated).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})) : "";
+  foot.textContent = EV_UPDATED ? ("forecast/previous from calendar · actual fills in after release · updated "+new Date(EV_UPDATED).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})) : "";
 }
+
 async function loadEvents(){
-  try{ const r=await fetch('api/events',{cache:'no-store'}); const j=await r.json(); renderEvents(j.events||[], j.updated); }
-  catch(e){ renderEvents(null); }
+  try{
+    const r=await fetch('api/events',{cache:'no-store'}); const j=await r.json();
+    const prevKey = EV_DAYS.length ? EV_DAYS[EV_DAYIDX] : null;   // keep the day the user is on
+    EVENTS=j.events||[]; EV_UPDATED=j.updated||null;
+    EV_DAYS=[...new Set(EVENTS.filter(e=>e.datetime_utc).map(e=>_dayKey(e.datetime_utc)))].sort();
+    let idx = prevKey ? EV_DAYS.indexOf(prevKey) : -1;
+    if(idx<0){ const tk=_todayKey(); idx=EV_DAYS.indexOf(tk); if(idx<0) idx=EV_DAYS.findIndex(d=>d>=tk); }
+    EV_DAYIDX = idx<0 ? Math.max(0,EV_DAYS.length-1) : idx;
+    renderEvents();
+  }catch(e){ EVENTS=null; renderEvents(); }
 }
+document.getElementById('evPrev').onclick=()=>{ if(EV_DAYIDX>0){EV_DAYIDX--; renderEvents();} };
+document.getElementById('evNext').onclick=()=>{ if(EV_DAYIDX<EV_DAYS.length-1){EV_DAYIDX++; renderEvents();} };
+document.querySelectorAll('#evImp .imp').forEach(b=>b.onclick=()=>{ EV_LEVEL=+b.dataset.lvl; renderEvents(); });
 
 
 let VIEW='main', SECTOR_NAME=null, SECTOR_DATA=[];
@@ -313,10 +421,10 @@ function render(){
   if(!current || !current.length){
     const msg = currentPeriod==='Live'
       ? "Waiting for the bot\u2019s first cycle\u2026"
-      : currentPeriod+" \u2014 historical view needs the data backend";
+      : (PERIOD_ERR ? currentPeriod+" \u2014 "+PERIOD_ERR : currentPeriod+" \u2014 no data for this window");
     const hint = currentPeriod==='Live'
       ? "(the bot computes during US market sessions)"
-      : "tap Live for real-time flow";
+      : "tap the tab again to retry";
     const a=el("text",{x:CX,y:CY-6,"text-anchor":"middle",fill:"var(--muted)","font-size":"20","font-weight":"600"}); a.textContent=msg; svg.appendChild(a);
     const b=el("text",{x:CX,y:CY+22,"text-anchor":"middle",fill:"var(--muted)","font-size":"13"}); b.textContent=hint; svg.appendChild(b);
     return;
@@ -443,9 +551,10 @@ let saved='dark'; try{saved=localStorage.getItem('flowmap-theme')||'dark';}catch
 current=[];
 applyTheme(saved);
 buildPills();
-setPeriod('Live');
-loadLive();
+setPeriod('1d');                       // default view = last 1 day
+loadLive();                            // warm Live data in the background (instant when tapped)
 setInterval(loadLive, 60000);
+setInterval(refreshCurrent, 120000);   // keep the on-screen period quietly up to date
 loadEvents();
 setInterval(loadEvents, 300000);
 </script>

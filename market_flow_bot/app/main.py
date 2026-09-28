@@ -67,6 +67,7 @@ def run() -> None:
     engine = PeriodEngine(lambda: sectors, cfg.benchmark, provider, bars,
                           mp_store=mp_store, mp_worker=mp_worker)
     webserver.start(cfg.ingress_port, engine=engine)
+    engine.warm()   # pre-compute common windows (1d/3d/6h/3h/1h) in the background
     total = sum(len(s.symbols) for s in sectors)
     log.info("Up. source=%s sectors=%d constituents=%d symbols=%d poll=%ss benchmark=%s",
              provider.name, len(sectors), total, len(symbols), cfg.poll_interval_seconds, cfg.benchmark)
@@ -97,6 +98,9 @@ def run() -> None:
             frames = provider.get_bars(symbols, interval=INTERVAL, lookback=LOOKBACK)
             for _sym, _df in frames.items():
                 bars.put_bars("5m", _sym, _df)
+            # keep the common period snapshots warm off the freshly-stored 5m bars
+            # (background, de-duplicated; reads cache, so no extra Yahoo load)
+            engine.warm()
             signals, flowboard, directions = compute(
                 frames, sectors, cfg.benchmark, cfg.thresholds, cfg.alerts,
                 prev_dir, session=session, history=history, first_cycle=first_cycle)

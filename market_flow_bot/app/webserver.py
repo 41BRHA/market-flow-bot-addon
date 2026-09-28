@@ -70,7 +70,9 @@ class _Handler(BaseHTTPRequestHandler):
                         return self._send(200, fh.read(), "application/json")
                 except Exception:
                     return self._send(200, b"{}", "application/json")
-            # A period or explicit date range -> compute on demand via the engine.
+            # A period or explicit date range -> served from the engine's snapshot
+            # cache. This NEVER blocks on a Yahoo fetch: it returns cached data
+            # instantly, or {"pending": true} while a background compute runs.
             if _ENGINE is None:
                 return self._send(200, b'{"error":"engine not ready"}', "application/json")
             try:
@@ -79,10 +81,10 @@ class _Handler(BaseHTTPRequestHandler):
                     from datetime import datetime, timezone
                     start = datetime.fromisoformat(frm).replace(tzinfo=timezone.utc).timestamp()
                     end = datetime.fromisoformat(to).replace(tzinfo=timezone.utc).timestamp()
-                snap = _ENGINE.compute(period=period, start=start, end=end)
+                snap = _ENGINE.get(period=period, start=start, end=end)
                 return self._send(200, json.dumps(snap).encode(), "application/json")
             except Exception as exc:  # noqa: BLE001
-                log.warning("period compute failed: %s", exc)
+                log.warning("period get failed: %s", exc)
                 return self._send(200, json.dumps({"error": str(exc)}).encode(), "application/json")
         if path in ("/", "/index.html"):
             try:

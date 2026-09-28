@@ -1,13 +1,27 @@
 """Period engine — net money flow over any requested window.
 
-Cache-first: for a window it asks the bar-store what's missing, fetches only
-those gaps from the provider, stores them, then computes flow over the whole
-window (option A — the net across the period, per sector). Resolution is picked
-automatically (5-min for short, hourly for weeks, daily for months+).
+Cache-first AND request-fast. Two layers:
+
+  1. Bar cache (barstore): for a window we ask the store what's missing, fetch
+     only those gaps from the provider, store them, then compute flow over the
+     whole window. Resolution auto-picked (5-min short, hourly weeks, daily
+     months+).
+
+  2. Snapshot cache (this module): the *computed* per-period result is cached in
+     memory with a short TTL. The web layer calls `get()`, which NEVER blocks on
+     a Yahoo fetch — it returns the cached snapshot immediately (refreshing it in
+     a background thread if stale), or a `{"pending": True}` marker the first time
+     a period is ever asked for. Concurrent requests for the same window are
+     de-duplicated, so repeated tab clicks or the live poll can't stack heavy
+     backfills and trip Yahoo's rate limiter.
+
+The main loop warms the common windows in the background each cycle, so the
+default view (1d) is essentially always ready.
 """
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -23,6 +37,14 @@ PERIOD_SECONDS = {
     "1m": 30 * 86400, "3m": 90 * 86400, "6m": 182 * 86400,
     "1y": 365 * 86400, "2y": 730 * 86400, "3y": 1095 * 86400, "5y": 1825 * 86400,
 }
+
+# How long a computed snapshot stays "fresh" before a background refresh, by
+# bar resolution. Short windows move fast; long windows barely change intraday.
+SNAPSHOT_TTL = {"5m": 180, "1h": 1800, "1d": 6 * 3600}
+
+# The windows the main loop keeps warm each cycle (all 5-minute resolution, so
+# they compute straight from bars the live loop already stored — no Yahoo hit).
+WARM_PERIODS = ["1d", "3d", "6h", "3h", "1h"]
 
 
 def _iso(ts: float) -> str:
@@ -51,13 +73,23 @@ class PeriodEngine:
         self.store = store
         self.mp_store = mp_store            # MaxPainStore (optional)
         self.mp_worker = mp_worker          # MaxPainWorker (optional)
+        # snapshot cache
+        self._cache: dict[str, dict] = {}   # key -> {"snap": dict, "ts": float}
+        self._inflight: set[str] = set()    # keys currently being computed
+        self._lock = threading.Lock()
 
+    # ---- windows / keys -------------------------------------------------
     def window_for(self, period=None, start=None, end=None):
         now = time.time()
         if start is not None and end is not None:
             return float(start), float(end)
         secs = PERIOD_SECONDS.get(period, 86400)
         return now - secs, now
+
+    def _key(self, period=None, start=None, end=None) -> str:
+        if start is not None and end is not None:
+            return f"{int(start)}_{int(end)}"
+        return period or "1d"
 
     def _symbols(self, sectors):
         syms = []
@@ -82,7 +114,8 @@ class PeriodEngine:
                 for sym in syms:
                     self.store.record_coverage(res, sym, gs, ge)
 
-    def compute(self, period=None, start=None, end=None) -> dict:
+    # ---- the actual compute (may hit Yahoo; runs off the request thread) -
+    def _compute(self, period=None, start=None, end=None) -> dict:
         s, e = self.window_for(period, start, end)
         res = barstore.resolution_for(e - s)
         sectors = self.get_sectors()
@@ -90,7 +123,7 @@ class PeriodEngine:
         try:
             self._fill_gaps(syms, res, res, s, e)
         except Exception as exc:  # noqa: BLE001 - serve whatever is cached
-            log.warning("gap fill failed (%s); serving cached", exc)
+            log.warning("gap fill failed (%s); serving cached bars", exc)
         frames = {}
         for sym in syms:
             df = self.store.get_bars(res, sym, s, e)
@@ -111,6 +144,78 @@ class PeriodEngine:
             "leader": fb[0].name if fb else None,
         }
 
+    def _refresh(self, key, period, start, end):
+        """Compute in this thread and store the snapshot; clear the in-flight flag."""
+        try:
+            snap = self._compute(period=period, start=start, end=end)
+            with self._lock:
+                self._cache[key] = {"snap": snap, "ts": time.time()}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("period compute failed for %s: %s", key, exc)
+            with self._lock:
+                # only record an error snapshot if we have no good data to fall back on
+                if key not in self._cache:
+                    self._cache[key] = {"snap": {"error": str(exc), "sectors": []},
+                                        "ts": time.time()}
+        finally:
+            with self._lock:
+                self._inflight.discard(key)
+
+    def _request(self, key, period, start, end, blocking=False):
+        """Kick off a compute for `key` unless one is already running (dedup)."""
+        with self._lock:
+            if key in self._inflight:
+                return
+            self._inflight.add(key)
+        if blocking:
+            self._refresh(key, period, start, end)
+        else:
+            threading.Thread(target=self._refresh, args=(key, period, start, end),
+                             daemon=True).start()
+
+    # ---- the web-facing, NON-BLOCKING entry point -----------------------
+    def get(self, period=None, start=None, end=None) -> dict:
+        """Return a snapshot immediately. Never blocks on Yahoo.
+
+        - cached & fresh   -> that snapshot
+        - cached & stale   -> that snapshot (flagged stale) + background refresh
+        - never computed   -> {"pending": True} + background compute kicked off
+        """
+        key = self._key(period, start, end)
+        s, e = self.window_for(period, start, end)
+        res = barstore.resolution_for(e - s)
+        # custom absolute ranges don't move -> keep them fresh for a good while
+        ttl = SNAPSHOT_TTL.get(res, 300) if (start is None and end is None) else 3600
+
+        with self._lock:
+            entry = self._cache.get(key)
+            computing = key in self._inflight
+
+        if entry:
+            age = time.time() - entry["ts"]
+            snap = dict(entry["snap"])
+            if age > ttl and not computing:
+                self._request(key, period, start, end)   # refresh in the background
+            snap["age"] = round(age)
+            if age > ttl:
+                snap["stale"] = True
+            return snap
+
+        # nothing yet -> start computing and tell the client to poll
+        if not computing:
+            self._request(key, period, start, end)
+        return {"pending": True, "period": period or key, "sectors": []}
+
+    def warm(self, periods=None):
+        """Pre-compute common windows in the background (called from the loop)."""
+        for p in (periods or WARM_PERIODS):
+            self._request(self._key(p), p, None, None)
+
+    # keep the old name as a blocking alias (used by nothing on the hot path now)
+    def compute(self, period=None, start=None, end=None) -> dict:
+        return self._compute(period=period, start=start, end=end)
+
+    # ---- per-stock drill-down (unchanged) -------------------------------
     def sector_detail(self, name, lookback_seconds=7200) -> dict:
         """Per-stock last value + recent flow for one sector's constituents.
         Reads the last ~2h of 5-min bars from the store (accumulated live)."""
