@@ -140,6 +140,11 @@
     <button class="applybtn" id="applyBtn">Apply</button>
   </div>
 
+  <!-- per-sector period selector (shown only in the drill-down view) -->
+  <div class="controls" id="sectorControls" style="display:none">
+    <div class="pills" id="sectorPills"></div>
+  </div>
+
   <div class="mainrow">
     <div class="map"><svg id="svg" viewBox="0 0 1000 1000" role="img" aria-label="Radial sector money-flow map"></svg></div>
     <aside class="events-panel">
@@ -332,33 +337,53 @@ document.getElementById('evNext').onclick=()=>{ if(EV_DAYIDX<EV_DAYS.length-1){E
 document.querySelectorAll('#evImp .imp').forEach(b=>b.onclick=()=>{ EV_LEVEL=+b.dataset.lvl; renderEvents(); });
 
 
-let VIEW='main', SECTOR_NAME=null, SECTOR_DATA=[];
-async function openSector(name){
-  VIEW='sector'; SECTOR_NAME=name; SECTOR_DATA=[];
+let VIEW='main', SECTOR_NAME=null, SECTOR_DATA=[], SECTOR_KEY='1d';
+
+/* the drill-down gets its own period tabs, so you can switch the window for a
+   single sector without leaving it. Defaults to the tab you came in on, but if
+   that's Live (empty after the close) it opens on 1d so there's data to see. */
+function buildSectorPills(){
+  const box=document.getElementById('sectorPills'); box.innerHTML='';
+  PERIODS.forEach(k=>{
+    const b=document.createElement('button');
+    b.className='pill'; b.dataset.k=k; b.textContent=k;
+    b.onclick=()=>openSector(SECTOR_NAME, k);
+    box.appendChild(b);
+  });
+}
+
+async function openSector(name, key){
+  VIEW='sector'; SECTOR_NAME=name;
+  if(key) SECTOR_KEY=key;
+  else SECTOR_KEY = (currentKey==='Live') ? '1d' : currentKey;   // first open: inherit the main tab
   document.getElementById('controls').style.display='none';
   document.getElementById('daterow').hidden=true;
+  const sc=document.getElementById('sectorControls'); if(sc) sc.style.display='';
+  document.querySelectorAll('#sectorPills .pill').forEach(el=>el.classList.toggle('on', el.dataset.k===SECTOR_KEY));
   const ep=document.querySelector('.events-panel'); if(ep) ep.style.display='none';
   document.getElementById('backBtn').style.display='';
   document.getElementById('h1').textContent=name;
-  LOADING=true; render(); document.getElementById('statustxt').textContent=name+' · loading stocks…';
+  SECTOR_DATA=[]; LOADING=true; render();
+  document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · loading stocks…`;
   try{
-    // drill-down follows the tab that's on screen (1d, 3h, custom range, or Live)
-    const q = currentKey.includes('_')
-      ? `&from=${currentKey.split('_')[0]}&to=${currentKey.split('_')[1]}`
-      : `&period=${encodeURIComponent(currentKey)}`;
+    const q = SECTOR_KEY.includes('_')
+      ? `&from=${SECTOR_KEY.split('_')[0]}&to=${SECTOR_KEY.split('_')[1]}`
+      : `&period=${encodeURIComponent(SECTOR_KEY)}`;
     const r=await fetch('api/sector?name='+encodeURIComponent(name)+q,{cache:'no-store'});
     const j=await r.json(); LOADING=false;
-    if(j.error || !j.stocks || !j.stocks.length){ SECTOR_DATA=[]; render(); document.getElementById('statustxt').textContent=name+' · no data'; return; }
+    if(VIEW!=='sector' || SECTOR_NAME!==name) return;         // user left / switched sector
+    if(j.error || !j.stocks || !j.stocks.length){ SECTOR_DATA=[]; render(); document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · no data for this window`; return; }
     SECTOR_DATA=j.stocks.map(x=>({name:x.ticker, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1), last:x.last, mp:x.maxpain, mpAt:x.maxpain_at}));
     render();
     const upd=j.updated?new Date(j.updated):null;
-    document.getElementById('statustxt').textContent=`${name} · ${j.stocks.length} stocks`+(upd?` · updated ${String(upd.getHours()).padStart(2,'0')}:${String(upd.getMinutes()).padStart(2,'0')}`:'');
+    document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · ${j.stocks.length} stocks`+(upd?` · updated ${String(upd.getHours()).padStart(2,'0')}:${String(upd.getMinutes()).padStart(2,'0')}`:'');
     document.getElementById('hdot').style.background='var(--in)';
   }catch(e){ LOADING=false; SECTOR_DATA=[]; render(); document.getElementById('statustxt').textContent=name+' · fetch failed'; }
 }
 function backToMain(){
   VIEW='main'; SECTOR_NAME=null;
   document.getElementById('controls').style.display='';
+  const sc=document.getElementById('sectorControls'); if(sc) sc.style.display='none';
   const ep=document.querySelector('.events-panel'); if(ep) ep.style.display='';
   document.getElementById('backBtn').style.display='none';
   document.getElementById('h1').textContent='Market Flow Map';
@@ -555,6 +580,7 @@ let saved='dark'; try{saved=localStorage.getItem('flowmap-theme')||'dark';}catch
 current=[];
 applyTheme(saved);
 buildPills();
+buildSectorPills();                    // period tabs for the sector drill-down
 setPeriod('1d');                       // default view = last 1 day
 loadLive();                            // warm Live data in the background (instant when tapped)
 setInterval(loadLive, 60000);

@@ -1,5 +1,5 @@
 name: Market Flow Bot
-version: "0.14.1"
+version: "0.14.2"
 slug: market_flow_bot
 description: Live volume-flow rotation engine — money in/out of every GICS sector (top-30 constituents each) plus AI-infra, software, metals (futures) & miners, with tunable big-shift alerts into Home Assistant.
 url: "https://github.com/your/market-flow-bot"
@@ -26,7 +26,7 @@ options:
   sessions:
     premarket: true
     regular: true
-    postmarket: false
+    postmarket: true
   benchmark:
     - SPY
   sectors:
