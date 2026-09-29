@@ -144,12 +144,12 @@
   .arrow{stroke-linecap:round; transition:stroke-width .3s ease, opacity .2s}
   .flow-dash{stroke-linecap:round; opacity:.9}
   .node-pill{fill:var(--panel); stroke:var(--line); stroke-width:1}
-  .node-name{font-size:13px; font-weight:600; fill:var(--ink)}
-  .node-flow{font-size:12px; font-weight:700}
-  .flow-on-arrow{font-size:14px; font-weight:800; paint-order:stroke; stroke:var(--bg); stroke-width:3.5px; stroke-linejoin:round}
-  .cash-on-arrow{font-size:11px; font-weight:600; fill:var(--muted); paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round}
-  .ball-val{font-weight:750; paint-order:stroke; stroke:var(--bg); stroke-width:2.5px; stroke-linejoin:round}
-  .node-cash{font-size:10.5px; fill:var(--muted); font-weight:500}
+  .node-name{font-size:17px; font-weight:750; fill:var(--ink); paint-order:stroke; stroke:var(--bg); stroke-width:2px; stroke-linejoin:round}
+  .node-flow{font-size:15px; font-weight:750}
+  .flow-on-arrow{font-size:20px; font-weight:850; paint-order:stroke; stroke:var(--bg); stroke-width:5px; stroke-linejoin:round}
+  .cash-on-arrow{font-size:15px; font-weight:750; fill:var(--ink); paint-order:stroke; stroke:var(--bg); stroke-width:4px; stroke-linejoin:round}
+  .ball-val{font-weight:850; paint-order:stroke; stroke:var(--bg); stroke-width:3.5px; stroke-linejoin:round}
+  .node-cash{font-size:13px; fill:var(--muted); font-weight:650}
   .hub{fill:var(--hub)}
   .hub-lbl{fill:var(--hubink); text-anchor:middle}
   .hub-title{font-size:11px; letter-spacing:.6px; opacity:.7}
@@ -588,6 +588,7 @@ async function loadPoliticianTrades(ticker){
   const j=await entry.promise;
   if(VIEW!=='sector'||SECTOR_SEL!==ticker)return;
   const box=document.getElementById('politicianTrades'); if(!box)return;
+  const openKeys=new Set([...box.querySelectorAll('details[open][data-key]')].map(el=>el.dataset.key));
   const heading='<b>Politician trades</b>';
   if(!j.available){box.innerHTML=heading+'<div class="sd-note">'+escHtml(j.error||'Data unavailable')+'</div>';return;}
   const status=j.status||{},h=status.house||{},sen=status.senate||{},counts=status.house_reports||{};
@@ -595,9 +596,10 @@ async function loadPoliticianTrades(ticker){
   const rows=j.trades||[],groups=j.disclosures||[];
   const safeLink=v=>{try{const u=new URL(v);return u.protocol==='https:'?u.href:''}catch{return ''}};
   const hasNumber=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+  const money=v=>hasNumber(v)?'$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0}):'—';
   const politicianProfile=g=>{const p=g.profile||{},areas=(p.responsibilities||[]).join('; '),committees=(p.committees||[]).map(c=>(c.leadership?c.leadership+' — ':'')+c.name).join(' · ');return `<div class="sd-foot">${escHtml(p.title||g.chamber)}</div>`+(areas||committees?`<div class="sd-note"><b>Current official role</b>${areas?`<br>Relevant oversight: ${escHtml(areas)}`:''}${committees?`<br>Committees: ${escHtml(committees)}`:''}</div>`:'');};
   box.innerHTML=heading+'<div class="sd-foot">'+escHtml(coverage)+'</div><div class="sd-foot">Reported ranges · latest disclosures, independent of the flow period.</div>'+
-    (groups.length?groups.map((g,i)=>{const sc=g.score||{};return `<details style="padding:10px 0;border-bottom:1px solid var(--line)"><summary><b>${escHtml(g.politician)}</b><div class="sd-foot" style="display:inline;margin-left:5px">${escHtml(g.disclosure_date)} · ${g.trade_count} trade${g.trade_count===1?'':'s'} · score ${hasNumber(sc.score)?Number(sc.score).toFixed(1):'—'}</div></summary>${politicianProfile(g)}${g.trades.map(t=>{const link=safeLink(t.source_url),dr=hasNumber(t.directional_return_pct)?((Number(t.directional_return_pct)>0?'+':'')+Number(t.directional_return_pct).toFixed(2)+'%'):'pricing…';return `<div style="padding:10px 3px;border-top:1px solid var(--line);margin-top:7px"><b class="${t.action==='Buy'?'up':t.action==='Sell'?'down':''}">${escHtml(t.action)}</b> · ${escHtml(t.amount)}<div class="sd-foot">Trade: ${escHtml(t.transaction_date)} · estimated close: ${hasNumber(t.estimated_price)?'$'+Number(t.estimated_price).toFixed(2):'pricing…'}<br>Latest: ${hasNumber(t.current_price)?'$'+Number(t.current_price).toFixed(2):'pricing…'} · direction-adjusted: ${escHtml(dr)}<br>${escHtml(t.owner)} · ${escHtml(t.asset_type)}</div>${link?`<a style="color:var(--accent);font-size:12px" href="${escHtml(link)}" target="_blank" rel="noopener noreferrer">Original disclosure ↗</a>`:''}</div>`}).join('')}</details>`}).join(''):'<div class="sd-note">No matching disclosures in the records collected so far. Coverage may be incomplete.</div>')+
+    (groups.length?groups.map((g,i)=>{const sc=g.score||{},key=encodeURIComponent(g.politician)+'|'+g.disclosure_date,filing=hasNumber(g.estimated_value)?((g.value_open_ended?'at least ':'about ')+money(g.estimated_value)):'unavailable';return `<details data-key="${escHtml(key)}" ${openKeys.has(key)?'open':''} style="padding:10px 0;border-bottom:1px solid var(--line)"><summary><b>${escHtml(g.politician)}</b><div class="sd-foot" style="display:inline;margin-left:5px">${escHtml(g.disclosure_date)} · ${g.trade_count} trade${g.trade_count===1?'':'s'} · est. ${filing} · score ${hasNumber(sc.score)?Number(sc.score).toFixed(1):'—'}</div></summary>${politicianProfile(g)}${g.trades.map(t=>{const link=safeLink(t.source_url),dr=hasNumber(t.directional_return_pct)?((Number(t.directional_return_pct)>0?'+':'')+Number(t.directional_return_pct).toFixed(2)+'%'):'pricing…',position=hasNumber(t.estimated_value)?money(t.estimated_value):'unavailable';return `<div style="padding:10px 3px;border-top:1px solid var(--line);margin-top:7px"><b class="${t.action==='Buy'?'up':t.action==='Sell'?'down':''}">${escHtml(t.action)}</b> · ${escHtml(t.amount)} · estimated value ${position}<div class="sd-foot">Trade: ${escHtml(t.transaction_date)} · estimated close: ${hasNumber(t.estimated_price)?'$'+Number(t.estimated_price).toFixed(2):'pricing…'}<br>Latest: ${hasNumber(t.current_price)?'$'+Number(t.current_price).toFixed(2):'pricing…'} · direction-adjusted: ${escHtml(dr)}<br>${escHtml(t.owner)} · ${escHtml(t.asset_type)}</div>${link?`<a style="color:var(--accent);font-size:12px" href="${escHtml(link)}" target="_blank" rel="noopener noreferrer">Original disclosure ↗</a>`:''}</div>`}).join('')}</details>`}).join(''):'<div class="sd-note">No matching disclosures in the records collected so far. Coverage may be incomplete.</div>')+
     `<div class="sd-foot">Showing ${rows.length} of ${j.total||0}. Open Politician Trades in the sidebar to search all records. Amendments may appear separately.</div>`;
   if(rows.some(t=>t.price_pending))setTimeout(()=>{if(VIEW==='sector'&&SECTOR_SEL===ticker)loadPoliticianTrades(ticker)},5500);
 }
@@ -772,7 +774,7 @@ function render(){
     const hHalf = 16 + Math.abs(d.flow)*22;
 
     // end ball, sized by total money across the sector's stocks
-    const rb = 9 + Math.sqrt(d.total/maxTotal)*24;
+    const rb = 13 + Math.sqrt(d.total/maxTotal)*27;
 
     const x0=CX+dirx*(HUBR+8),  y0=CY+diry*(HUBR+8); // hub edge
     const nx=CX+dirx*R,         ny=CY+diry*R;        // ball centre
@@ -809,7 +811,7 @@ function render(){
     g.appendChild(el("circle",{cx:nx,cy:ny,r:rb,fill:col,"fill-opacity":.16,
       stroke:col,"stroke-width":2.5,"stroke-opacity":.85,class:"ball"}));
     // total value inside the ball
-    const fs=Math.max(9,Math.min(15,rb*0.52));
+    const fs=Math.max(12,Math.min(19,rb*0.58));
     const bv=el("text",{x:nx,y:ny+fs*0.34,class:"ball-val","text-anchor":"middle",
       fill:col,"font-size":fs});
     bv.textContent=fmtTotal(d.total);
@@ -865,6 +867,21 @@ function applyTheme(t){root.setAttribute('data-theme',t);
 }
 btn.addEventListener('click',()=>applyTheme(root.getAttribute('data-theme')==='dark'?'light':'dark'));
 let saved='dark'; try{saved=localStorage.getItem('flowmap-theme')||'dark';}catch(e){}
+
+// Protect Home Assistant's ingress view from mobile keyboard Back actions.
+// The extra same-page entry exists only while an input/select has focus.
+let inputGuard=false,cleaningGuard=false;
+const isEditor=e=>e&&e.matches&&e.matches('input,select,textarea');
+document.addEventListener('focusin',e=>{
+  if(isEditor(e.target)&&!inputGuard){history.pushState({inputGuard:true},'',location.href);inputGuard=true;}
+});
+document.addEventListener('focusout',()=>setTimeout(()=>{
+  if(inputGuard&&!isEditor(document.activeElement)){inputGuard=false;cleaningGuard=true;history.back();}
+},120));
+addEventListener('popstate',()=>{
+  if(cleaningGuard){cleaningGuard=false;return;}
+  if(inputGuard){inputGuard=false;if(isEditor(document.activeElement))document.activeElement.blur();}
+});
 current=[];
 applyTheme(saved);
 buildPills();

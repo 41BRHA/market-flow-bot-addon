@@ -1,12 +1,18 @@
-# Smart Money Tracker 0.2.1
+# Smart Money Tracker 0.2.3
 
 Politician-trade disclosures with a separate persistent store, automatic official House PTR collection, optional FMP Senate ingestion, CSV import and a searchable ingress dashboard. Designed to connect to Market Flow's stock detail panel through a read-only HTTP API.
 
 See DOCS.md or START-HERE.md in the bundle for installation, coverage and limitations.
 
 The dashboard groups all trades from one politician on one disclosure date into
-an expandable row. Filters include a ticker, a collected-politician selector,
-transaction type and disclosure date.
+an expandable row. It can sort by politician score or estimated filing value,
+and filter estimated value either by whole filing or individual transaction.
+Expanded rows stay open during the automatic dashboard refresh.
+
+Estimated transaction values use the midpoint of the publicly reported range.
+Filing values sum those estimates; open-ended ranges use the disclosed minimum
+and are visibly marked. These values are comparison aids, not exact position
+sizes.
 
 When Market Flow is running, Smart Money asks its internal API for the daily
 close on the disclosed transaction date (or next trading session) and the most

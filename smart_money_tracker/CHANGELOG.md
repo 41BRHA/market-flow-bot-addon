@@ -1,3 +1,11 @@
+# 0.2.3
+
+- Sort disclosures by politician score, filing value or disclosure date.
+- Filter by minimum/maximum estimated value at either filing or transaction level.
+- Show a midpoint estimate for every transaction and a summed estimate/range before expansion.
+- Preserve expanded filings across the 30-second refresh instead of closing them.
+- Add a focused-input history guard so a mobile keyboard Back action does not leave the add-on.
+
 # 0.2.1
 
 - Automatic current-member profiles from official House Clerk and Senate XML feeds, refreshed daily and cached locally.

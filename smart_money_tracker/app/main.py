@@ -4,7 +4,7 @@ import os
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
-from .core import Store,import_csv
+from .core import Store,estimated_amount,import_csv
 from .prices import PriceBridge,politician_score
 from .profiles import ProfileService
 from .sync import Collector
@@ -30,20 +30,37 @@ def make_handler(store,collector,prices=None,profiles=None):
                     if prices is not None:
                         result['trades']=prices.enrich(result['trades'])
                     if q.get('grouped') in ('1','true','yes'):
-                        grouped=store.disclosures(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),q.get('limit',25),q.get('offset',0))
-                        people=[g['politician'] for g in grouped['disclosures']]
+                        groups=store.disclosures(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),
+                                                q.get('min_value',''),q.get('max_value',''),q.get('value_scope','filing'))
+                        people=list(dict.fromkeys(g['politician'] for g in groups))
                         history=store.trades_for_people(people)
                         enriched=prices.enrich(history) if prices is not None else history
                         by_id={t.get('id'):t for t in enriched}
                         by_person={}
                         for trade in enriched:by_person.setdefault(trade.get('politician',''),[]).append(trade)
-                        for group in grouped['disclosures']:
+                        for group in groups:
                             group['trades']=[by_id.get(t.get('id'),t) for t in group['trades']]
+                            for trade in group['trades']:
+                                trade['estimated_value']=estimated_amount(trade)
                             group['score']=politician_score(by_person.get(group['politician'],[]))
                             if profiles is not None:
                                 district=group['trades'][0].get('district','') if group['trades'] else ''
                                 group['profile']=profiles.get(group['politician'],group.get('chamber',''),district)
-                        result.update(grouped)
+                        sort=q.get('sort','recent')
+                        if sort=='score_desc':
+                            groups.sort(key=lambda g:(g['score'].get('rated_trades',0)>0,g['score'].get('score',50),g['disclosure_date']),reverse=True)
+                        elif sort=='score_asc':
+                            groups.sort(key=lambda g:(g['score'].get('rated_trades',0)==0,g['score'].get('score',50),g['disclosure_date']))
+                        elif sort=='value_desc':
+                            groups.sort(key=lambda g:(g.get('estimated_value') is not None,g.get('estimated_value') or 0,g['disclosure_date']),reverse=True)
+                        elif sort=='value_asc':
+                            groups.sort(key=lambda g:(g.get('estimated_value') is None,g.get('estimated_value') or 0,g['disclosure_date']))
+                        elif sort=='recent':
+                            groups.sort(key=lambda g:(g['disclosure_date'],g['politician'].lower()),reverse=True)
+                        else:
+                            raise ValueError('Invalid sort order')
+                        limit=max(1,min(50,int(q.get('limit',25))));offset=max(0,min(100000,int(q.get('offset',0))))
+                        result.update(disclosures=groups[offset:offset+limit],disclosures_total=len(groups),limit=limit,offset=offset)
                     if prices is not None:result['price_link']=prices.status()
                     if profiles is not None:result['profile_status']=profiles.status()
                     result['status']=store.status();return self.send(200,result)

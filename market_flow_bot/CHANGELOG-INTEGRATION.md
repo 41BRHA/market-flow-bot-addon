@@ -1,3 +1,10 @@
+# 0.16.3
+
+- Increased sector names, arrow flow/cash labels and end-ball values for readability.
+- Show per-transaction and filing-level estimated politician trade values in the stock panel.
+- Preserve open politician disclosures while pending prices refresh.
+- Add a focused-input history guard for mobile keyboard Back actions.
+
 # 0.16.1
 
 - Display current official congressional role, party, state/district, committee assignments, leadership positions and relevant oversight areas beside disclosure names.

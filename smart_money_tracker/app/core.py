@@ -45,6 +45,35 @@ def amount_range(value):
     return text, None, None
 
 
+def estimated_amount(trade):
+    """Best single-value estimate for a disclosed range.
+
+    Bounded ranges use their midpoint.  Open-ended ranges use the disclosed
+    lower bound, so callers can still sort/filter them without pretending an
+    unknown upper bound is known.
+    """
+    low, high = trade.get('amount_min'), trade.get('amount_max')
+    if not isinstance(low, (int, float)):
+        return None
+    if isinstance(high, (int, float)):
+        return (float(low) + float(high)) / 2
+    return float(low)
+
+
+def amount_summary(trades):
+    estimates = [estimated_amount(t) for t in trades]
+    known = [v for v in estimates if v is not None]
+    lows = [t.get('amount_min') for t in trades]
+    highs = [t.get('amount_max') for t in trades]
+    return {
+        'estimated_value': round(sum(known), 2) if known else None,
+        'reported_min': sum(v for v in lows if isinstance(v, (int, float))) if any(isinstance(v, (int, float)) for v in lows) else None,
+        'reported_max': sum(highs) if highs and all(isinstance(v, (int, float)) for v in highs) else None,
+        'value_incomplete': len(known) != len(trades),
+        'value_open_ended': any(isinstance(lo, (int, float)) and not isinstance(hi, (int, float)) for lo, hi in zip(lows, highs)),
+    }
+
+
 def normalise(row, source, source_id):
     sym = ticker(row.get('ticker') or row.get('symbol'))
     if not sym:
@@ -164,31 +193,56 @@ class Store:
         if since: where.append('disclosure_date>=?');args.append(iso_date(since))
         return where,args
 
-    def disclosures(self, ticker_value='', person='', action='', since='', limit=25, offset=0):
-        """One result row per politician and disclosure date, with its trades."""
+    def disclosures(self, ticker_value='', person='', action='', since='', min_value='', max_value='', value_scope='filing'):
+        """All matching disclosure groups before scoring/sorting/pagination.
+
+        Value filters use the midpoint of each reported range.  For an
+        open-ended range the disclosed lower bound is used and clearly marked
+        in the returned summary.
+        """
         where,args=self._where(ticker_value,person,action,since)
-        clause=' AND '.join(where);limit=max(1,min(50,int(limit)));offset=max(0,min(100000,int(offset)))
+        clause=' AND '.join(where)
+        if value_scope not in ('filing','transaction'):
+            raise ValueError('Invalid value filter basis')
+        try:
+            minimum = float(min_value) if str(min_value).strip() else None
+            maximum = float(max_value) if str(max_value).strip() else None
+        except (TypeError, ValueError) as exc:
+            raise ValueError('Estimated value filters must be numbers') from exc
+        if (minimum is not None and minimum < 0) or (maximum is not None and maximum < 0):
+            raise ValueError('Estimated value filters cannot be negative')
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError('Minimum estimated value exceeds maximum')
         with self.lock:
-            total=self.db.execute('SELECT count(*) FROM (SELECT 1 FROM trades WHERE '+clause+' GROUP BY politician,disclosure_date)',args).fetchone()[0]
-            keys=self.db.execute('SELECT politician,disclosure_date FROM trades WHERE '+clause+' GROUP BY politician,disclosure_date ORDER BY disclosure_date DESC,politician LIMIT ? OFFSET ?',args+[limit,offset]).fetchall()
-            groups=[]
-            for politician,disclosure_date in keys:
-                group_where=where+['politician=?','disclosure_date=?']
-                group_args=args+[politician,disclosure_date]
-                rows=self.db.execute('SELECT payload FROM trades WHERE '+' AND '.join(group_where)+' ORDER BY transaction_date DESC,ticker,id',group_args).fetchall()
-                trades=[json.loads(r[0]) for r in rows]
-                groups.append(dict(politician=politician,disclosure_date=disclosure_date,
-                                   chamber=trades[0].get('chamber') if trades else '',trades=trades,
-                                   trade_count=len(trades)))
-        return dict(disclosures=groups,disclosures_total=total,limit=limit,offset=offset)
+            rows=self.db.execute('SELECT payload FROM trades WHERE '+clause+' ORDER BY disclosure_date DESC,politician COLLATE NOCASE,transaction_date DESC,ticker,id',args).fetchall()
+        grouped={}
+        for row in rows:
+            trade=json.loads(row[0]); value=estimated_amount(trade)
+            if value_scope == 'transaction' and ((minimum is not None and (value is None or value < minimum)) or
+                                                  (maximum is not None and (value is None or value > maximum))):
+                continue
+            key=(trade.get('politician',''),trade.get('disclosure_date',''))
+            grouped.setdefault(key,[]).append(trade)
+        groups=[]
+        for (politician,disclosure_date),trades in grouped.items():
+            values=amount_summary(trades); value=values['estimated_value']
+            if value_scope == 'filing' and ((minimum is not None and (value is None or value < minimum)) or
+                                           (maximum is not None and (value is None or value > maximum))):
+                continue
+            for trade in trades:
+                trade['estimated_value']=estimated_amount(trade)
+            groups.append(dict(politician=politician,disclosure_date=disclosure_date,
+                               chamber=trades[0].get('chamber') if trades else '',trades=trades,
+                               trade_count=len(trades),**values))
+        return groups
 
     def people(self):
         with self.lock:
             rows=self.db.execute('SELECT politician,count(*) AS n,max(disclosure_date) AS latest FROM trades GROUP BY politician ORDER BY politician COLLATE NOCASE').fetchall()
         return [dict(name=r[0],trade_count=r[1],latest_disclosure=r[2]) for r in rows]
 
-    def trades_for_people(self, names, limit=2000):
-        names=list(dict.fromkeys(str(n) for n in names if n))[:50]
+    def trades_for_people(self, names, limit=10000):
+        names=list(dict.fromkeys(str(n) for n in names if n))[:900]
         if not names:return []
         marks=','.join('?' for _ in names)
         with self.lock:
