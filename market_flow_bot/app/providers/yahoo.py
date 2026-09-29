@@ -60,12 +60,27 @@ class YahooProvider:
         return None
 
     def _extract(self, data, batch, out):
+        if data is None or getattr(data, "empty", True):
+            return
+        # yfinance with group_by="ticker" returns MultiIndex columns (ticker,
+        # field) even for a SINGLE ticker, so `data["Close"]` would KeyError and
+        # the symbol would silently drop. Handle both shapes.
+        multi = isinstance(data.columns, pd.MultiIndex)
+        lvl0 = set(data.columns.get_level_values(0)) if multi else set()
         for sym in batch:
             try:
-                df = data if len(batch) == 1 else data[sym]
-                frame = pd.DataFrame(
-                    {"close": df["Close"], "volume": df["Volume"]}
-                ).dropna(subset=["close"])
+                if multi:
+                    df = data[sym] if sym in lvl0 else data.droplevel(0, axis=1)
+                else:
+                    df = data
+                cols = {"close": df["Close"], "volume": df["Volume"]}
+                # keep high/low when present — the money-flow engine uses the
+                # close's position within the bar range (Chaikin)
+                if "High" in df:
+                    cols["high"] = df["High"]
+                if "Low" in df:
+                    cols["low"] = df["Low"]
+                frame = pd.DataFrame(cols).dropna(subset=["close"])
                 if not frame.empty:
                     out[sym] = frame
             except Exception:  # noqa: BLE001 - one bad symbol shouldn't kill the batch

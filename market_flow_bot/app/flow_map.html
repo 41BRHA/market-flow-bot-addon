@@ -57,6 +57,8 @@
     display:flex; align-items:center; justify-content:center; flex:0 0 auto}
   .ev-nav:hover{border-color:var(--accent); color:var(--accent)}
   .ev-nav:disabled{opacity:.3; cursor:default}
+  .ev-nav.spin{animation:evspin .8s linear infinite; color:var(--accent); opacity:1}
+  @keyframes evspin{to{transform:rotate(360deg)}}
   .ev-day{font-size:12.5px; font-weight:750; color:var(--ink); text-align:center; flex:1 1 auto; line-height:1.2}
   .ev-day small{display:block; font-size:10px; font-weight:500; color:var(--muted); margin-top:1px}
   .ev-imp{display:flex; gap:6px; margin-bottom:10px}
@@ -73,6 +75,42 @@
   .ev-fap .v.act{color:var(--accent)}
   .ev-fap .v.dim{color:var(--muted); font-weight:500}
   @media (max-width:760px){ .mainrow{flex-direction:column} .events-panel{flex:none; width:auto} }
+  /* ---- sector drill-down: three-panel (detail | radial | list) ---- */
+  .sectorwrap{display:none; gap:14px; align-items:flex-start; margin-top:8px}
+  .sectorwrap.on{display:flex}
+  .sec-detail{flex:0 0 296px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px 16px 14px}
+  .sec-mid{flex:1 1 auto; min-width:0}
+  .sec-map{width:100%; aspect-ratio:1/1}
+  .sec-list{flex:0 0 244px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:8px 8px 10px; align-self:stretch; max-height:74vh; overflow:auto}
+  @media (max-width:920px){ .sectorwrap.on{flex-direction:column} .sec-detail,.sec-list{flex:none; width:auto; max-height:none} }
+  .up{color:var(--in)} .down{color:var(--out)}
+  .sd-tkr{font-size:26px; font-weight:800; letter-spacing:.3px}
+  .sd-tkr span{font-size:15px; font-weight:600; color:var(--muted); margin-left:8px}
+  .sd-name{font-size:12px; color:var(--muted); margin:3px 0 12px}
+  .sd-name b{font-weight:800}
+  .sd-pin{background:rgba(217,164,65,.10); border:1px solid rgba(217,164,65,.35);
+    border-radius:12px; padding:12px 10px; text-align:center; margin-bottom:12px}
+  .sd-pin .k{font-size:10px; letter-spacing:1px; color:var(--muted); text-transform:uppercase; font-weight:700}
+  .sd-pin .v{font-size:30px; font-weight:800; color:#d9a441; margin-top:2px}
+  .sd-row{display:flex; justify-content:space-between; padding:7px 2px; border-bottom:1px solid var(--line); font-size:13px}
+  .sd-row .k{color:var(--muted)} .sd-row .v{font-weight:700}
+  .sd-note{font-size:12px; color:var(--ink); background:var(--bg); border:1px solid var(--line);
+    border-radius:10px; padding:9px 11px; margin:12px 0; line-height:1.35}
+  .sd-hist-h{font-size:10px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); margin:8px 0 2px; font-weight:700}
+  .sd-hist{display:flex; justify-content:space-between; font-size:12.5px; padding:6px 2px; border-bottom:1px solid var(--line)}
+  .sd-hist .k{color:var(--muted)} .sd-hist .v{font-weight:750}
+  .sd-foot{font-size:10.5px; color:var(--muted); margin-top:10px; opacity:.85}
+  .sl-head{display:flex; justify-content:space-between; align-items:center; gap:6px; padding:4px 6px 8px;
+    font-size:12px; font-weight:700; color:var(--muted); position:sticky; top:-8px; background:var(--panel)}
+  .sl-sort{border:1px solid var(--line); background:var(--bg); color:var(--ink); border-radius:8px; font-size:11px; padding:3px 6px; cursor:pointer}
+  .sl-row{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px; border-radius:9px; cursor:pointer}
+  .sl-row:hover{background:var(--bg)}
+  .sl-row.sel{background:var(--bg); outline:1.5px solid var(--accent)}
+  .sl-tkr{font-weight:750; font-size:13px}
+  .sl-sub{font-size:11px; color:var(--muted); margin-top:1px}
+  .sl-right{text-align:right}
+  .sl-chg{font-weight:750; font-size:13px}
+  .sl-pin{font-size:11px; color:var(--muted); margin-top:1px}
   .controls{display:flex; gap:8px; align-items:center; margin-top:10px}
   .pills{display:flex; gap:6px; overflow-x:auto; scrollbar-width:thin; -webkit-overflow-scrolling:touch; padding-bottom:2px}
   .pills::-webkit-scrollbar{height:5px}
@@ -82,8 +120,15 @@
   .pill:hover{color:var(--ink)}
   .pill.on{background:var(--accent); color:#fff; border-color:var(--accent)}
   .pill.custom{flex:0 0 auto; padding:6px 11px}
+  .addtk{display:flex; gap:6px; align-items:center; margin-left:auto}
+  .addtk input{width:96px; border:1px solid var(--line); background:var(--bg); color:var(--ink);
+    border-radius:8px; padding:6px 9px; font-size:13px; text-transform:uppercase}
+  .addtk button{border:none; background:var(--accent); color:#fff; border-radius:8px;
+    padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer}
+  .addtk button:disabled{opacity:.5; cursor:default}
   .daterow{display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-top:8px;
     background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 12px}
+  .daterow[hidden]{display:none}   /* the `hidden` attribute must beat display:flex */
   .daterow label{font-size:12px; color:var(--muted); display:flex; flex-direction:column; gap:4px}
   .daterow input{border:1px solid var(--line); background:var(--bg); color:var(--ink);
     border-radius:8px; padding:6px 8px; font-size:13px}
@@ -143,6 +188,10 @@
   <!-- per-sector period selector (shown only in the drill-down view) -->
   <div class="controls" id="sectorControls" style="display:none">
     <div class="pills" id="sectorPills"></div>
+    <div class="addtk">
+      <input id="addTk" placeholder="+ ticker" maxlength="6" autocomplete="off" spellcheck="false">
+      <button id="addTkBtn">Add</button>
+    </div>
   </div>
 
   <div class="mainrow">
@@ -152,6 +201,7 @@
         <button class="ev-nav" id="evPrev" aria-label="Previous day">‹</button>
         <div class="ev-day" id="evDay">Events</div>
         <button class="ev-nav" id="evNext" aria-label="Next day">›</button>
+        <button class="ev-nav" id="evRefresh" title="Refresh calendar now" aria-label="Refresh calendar">↻</button>
       </div>
       <div class="ev-imp" id="evImp">
         <button class="imp" data-lvl="1" title="All events (low, medium &amp; high)">•</button>
@@ -163,16 +213,24 @@
     </aside>
   </div>
 
+  <div class="sectorwrap" id="sectorView">
+    <aside class="sec-detail" id="secDetail"></aside>
+    <div class="sec-mid"><div class="sec-map"><svg id="secSvg" viewBox="0 0 1000 1000" role="img" aria-label="Sector stocks flow &amp; max-pain"></svg></div></div>
+    <aside class="sec-list" id="secList"></aside>
+  </div>
+
   <div class="legend">
-    <span><span class="dot" style="background:var(--in)"></span><b>Inflow</b> — money in</span>
-    <span><span class="dot" style="background:var(--out)"></span><b>Outflow</b> — money out</span>
+    <span><span class="dot" style="background:var(--in)"></span><b>Inflow</b> — buying pressure</span>
+    <span><span class="dot" style="background:var(--out)"></span><b>Outflow</b> — selling pressure</span>
     <span>arrow thickness = conviction</span>
-    <span>end ball size = total money in the sector</span>
-    <span>labels = flow ratio (−1…+1) &amp; net $</span>
+    <span>end ball size = $-volume traded</span>
+    <span>labels = flow ratio (−1…+1) &amp; net money-flow $</span>
   </div>
   <p class="note">
-    “Net flow” is signed dollar-volume (price × shares, signed by up/down bars) — the scale and direction of money
-    changing hands, <b>not</b> a literal figure of new capital entering. The ratio (−1…+1) shows conviction; the hub sums every sector.
+    <b>Estimated money flow (Chaikin method):</b> each bar's dollar-volume is weighted by where price closed within its
+    high–low range — near the high = buying, near the low = selling — then summed. It's an accepted proxy for buy/sell
+    <b>pressure</b>, not tick-level order flow (which needs a paid quote feed). The ratio (−1…+1) is conviction; the hub
+    sums the 11 GICS sectors only (theme baskets overlap them and are excluded).
   </p>
 </div>
 
@@ -192,7 +250,8 @@ function renderStatus(){
     dot.style.background=hcol;
     const t=new Date(STATUS.updated), hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0');
     const ago=Math.max(0,Math.round((Date.now()-STATUS.updated)/60000));
-    txt.textContent=`● LIVE · ${STATUS.fetched}/${STATUS.total} symbols · updated ${hh}:${mm} (${ago<1?"just now":ago+" min ago"})`;
+    txt.textContent=`● LIVE · ${STATUS.fetched}/${STATUS.total} symbols · updated ${hh}:${mm} (${ago<1?"just now":ago+" min ago"})`
+                     + (STATUS.stale?" · data delayed":"");
     return;
   }
   if(!current || !current.length){ dot.style.background="var(--muted)"; txt.textContent=`${currentPeriod} · ${PERIOD_ERR?("error: "+PERIOD_ERR):"no data"}`; return; }
@@ -204,6 +263,11 @@ function renderStatus(){
 /* ---- period selector ----
    Tab order: 1d first (and the default view), then Live, then the rest. */
 const PERIODS=['1d','Live','1h','3h','6h','3d','1w','2w','1m','3m','6m','1y','2y','3y','5y'];
+// the 11 GICS sectors — the hub total sums ONLY these, because the theme
+// baskets (AI-Infra, Software, metals, miners) overlap them and would be
+// double-counted (NVDA is in both Technology and AI-Infra).
+const GICS=new Set(['Technology','Financials','Energy','Health Care','Industrials',
+  'Consumer Discretionary','Consumer Staples','Utilities','Materials','Real Estate','Communication Services']);
 let currentPeriod='1d';
 let currentKey='1d';
 let current=[];
@@ -320,9 +384,11 @@ function renderEvents(){
   foot.textContent = EV_UPDATED ? ("forecast/previous from calendar · actual fills in after release · updated "+new Date(EV_UPDATED).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})) : "";
 }
 
-async function loadEvents(){
+async function loadEvents(force){
+  const btn=document.getElementById('evRefresh');
+  if(force && btn){ btn.disabled=true; btn.classList.add('spin'); }
   try{
-    const r=await fetch('api/events',{cache:'no-store'}); const j=await r.json();
+    const r=await fetch('api/events'+(force?'?refresh=1':''),{cache:'no-store'}); const j=await r.json();
     const prevKey = EV_DAYS.length ? EV_DAYS[EV_DAYIDX] : null;   // keep the day the user is on
     EVENTS=j.events||[]; EV_UPDATED=j.updated||null;
     EV_DAYS=[...new Set(EVENTS.filter(e=>e.datetime_utc).map(e=>_dayKey(e.datetime_utc)))].sort();
@@ -331,13 +397,15 @@ async function loadEvents(){
     EV_DAYIDX = idx<0 ? Math.max(0,EV_DAYS.length-1) : idx;
     renderEvents();
   }catch(e){ EVENTS=null; renderEvents(); }
+  finally{ if(btn){ btn.disabled=false; btn.classList.remove('spin'); } }
 }
 document.getElementById('evPrev').onclick=()=>{ if(EV_DAYIDX>0){EV_DAYIDX--; renderEvents();} };
 document.getElementById('evNext').onclick=()=>{ if(EV_DAYIDX<EV_DAYS.length-1){EV_DAYIDX++; renderEvents();} };
+document.getElementById('evRefresh').onclick=()=>loadEvents(true);
 document.querySelectorAll('#evImp .imp').forEach(b=>b.onclick=()=>{ EV_LEVEL=+b.dataset.lvl; renderEvents(); });
 
 
-let VIEW='main', SECTOR_NAME=null, SECTOR_DATA=[], SECTOR_KEY='1d';
+let VIEW='main', SECTOR_NAME=null, SECTOR_DATA=[], SECTOR_KEY='1d', SECTOR_SEL=null, SECTOR_SORT='flow', SECTOR_UPDATED=null;
 
 /* the drill-down gets its own period tabs, so you can switch the window for a
    single sector without leaving it. Defaults to the tab you came in on, but if
@@ -352,39 +420,189 @@ function buildSectorPills(){
   });
 }
 
+function _abbrev(name){
+  const parts=(name||'').trim().split(/\s+/);
+  if(parts.length>1) return parts.map(p=>p[0]).join('').slice(0,4).toUpperCase();
+  return (name||'').slice(0,4).toUpperCase();
+}
+function _distPct(s){ return (s.mp!=null && s.last!=null && s.mp>0) ? (s.last-s.mp)/s.mp*100 : null; }
+function _daysTo(exp){ if(!exp) return null; const d=Math.ceil((new Date(exp+'T00:00:00')-Date.now())/864e5); return isNaN(d)?null:d; }
+function _sortRows(rows){
+  const a=[...rows];
+  if(SECTOR_SORT==='flow') a.sort((x,y)=>y.flow-x.flow);
+  else if(SECTOR_SORT==='distance') a.sort((x,y)=>(Math.abs(_distPct(y)??-1))-(Math.abs(_distPct(x)??-1)));
+  else if(SECTOR_SORT==='money') a.sort((x,y)=>y.total-x.total);
+  else if(SECTOR_SORT==='ticker') a.sort((x,y)=>x.name<y.name?-1:1);
+  return a;
+}
+
 async function openSector(name, key){
   VIEW='sector'; SECTOR_NAME=name;
   if(key) SECTOR_KEY=key;
   else SECTOR_KEY = (currentKey==='Live') ? '1d' : currentKey;   // first open: inherit the main tab
+  // swap main view for the drill-down panels
   document.getElementById('controls').style.display='none';
   document.getElementById('daterow').hidden=true;
+  document.querySelector('.mainrow').style.display='none';
+  document.querySelectorAll('.legend,.note').forEach(e=>e.style.display='none');
+  document.getElementById('sectorView').classList.add('on');
   const sc=document.getElementById('sectorControls'); if(sc) sc.style.display='';
   document.querySelectorAll('#sectorPills .pill').forEach(el=>el.classList.toggle('on', el.dataset.k===SECTOR_KEY));
-  const ep=document.querySelector('.events-panel'); if(ep) ep.style.display='none';
   document.getElementById('backBtn').style.display='';
   document.getElementById('h1').textContent=name;
-  SECTOR_DATA=[]; LOADING=true; render();
-  document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · loading stocks…`;
+  document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · loading…`;
+  document.getElementById('secDetail').innerHTML='<div class="sd-name">loading…</div>';
+  document.getElementById('secList').innerHTML=''; document.getElementById('secSvg').innerHTML='';
   try{
     const q = SECTOR_KEY.includes('_')
       ? `&from=${SECTOR_KEY.split('_')[0]}&to=${SECTOR_KEY.split('_')[1]}`
       : `&period=${encodeURIComponent(SECTOR_KEY)}`;
     const r=await fetch('api/sector?name='+encodeURIComponent(name)+q,{cache:'no-store'});
-    const j=await r.json(); LOADING=false;
+    const j=await r.json();
     if(VIEW!=='sector' || SECTOR_NAME!==name) return;         // user left / switched sector
-    if(j.error || !j.stocks || !j.stocks.length){ SECTOR_DATA=[]; render(); document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · no data for this window`; return; }
-    SECTOR_DATA=j.stocks.map(x=>({name:x.ticker, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1), last:x.last, mp:x.maxpain, mpAt:x.maxpain_at}));
-    render();
-    const upd=j.updated?new Date(j.updated):null;
-    document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · ${j.stocks.length} stocks`+(upd?` · updated ${String(upd.getHours()).padStart(2,'0')}:${String(upd.getMinutes()).padStart(2,'0')}`:'');
+    if(j.error || !j.stocks || !j.stocks.length){
+      document.getElementById('secDetail').innerHTML='<div class="sd-name">no data for this window</div>';
+      document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · no data`; return;
+    }
+    SECTOR_DATA=j.stocks.map(x=>({name:x.ticker, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1),
+      last:x.last, mp:x.maxpain, mpSpot:x.maxpain_spot, mpExp:x.maxpain_expiry, mpAt:x.maxpain_at,
+      vsLast:x.maxpain_vs_last, vs1d:x.maxpain_vs_1d, vs1w:x.maxpain_vs_1w}));
+    SECTOR_UPDATED=j.updated||null;
+    // keep the current selection if it still exists, else pick the strongest-flow name
+    const top=[...SECTOR_DATA].sort((a,b)=>b.flow-a.flow)[0];
+    if(!SECTOR_DATA.some(s=>s.name===SECTOR_SEL)) SECTOR_SEL = top?top.name:null;
+    renderSector();
+    const upd=SECTOR_UPDATED?new Date(SECTOR_UPDATED):null;
+    document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · ${SECTOR_DATA.length} stocks`+(upd?` · updated ${String(upd.getHours()).padStart(2,'0')}:${String(upd.getMinutes()).padStart(2,'0')}`:'');
     document.getElementById('hdot').style.background='var(--in)';
-  }catch(e){ LOADING=false; SECTOR_DATA=[]; render(); document.getElementById('statustxt').textContent=name+' · fetch failed'; }
+  }catch(e){
+    document.getElementById('secDetail').innerHTML='<div class="sd-name">fetch failed</div>';
+    document.getElementById('statustxt').textContent=name+' · fetch failed';
+  }
 }
+// add a ticker to the current sector's runtime watchlist (no config edit needed)
+async function addTicker(){
+  const inp=document.getElementById('addTk'), btn=document.getElementById('addTkBtn');
+  const t=(inp.value||'').trim().toUpperCase().replace(/[^A-Z0-9.=-]/g,'');
+  if(!t || !SECTOR_NAME) return;
+  btn.disabled=true;
+  try{
+    await fetch(`api/watch?sector=${encodeURIComponent(SECTOR_NAME)}&add=${encodeURIComponent(t)}`,{cache:'no-store'});
+    inp.value='';
+    document.getElementById('statustxt').textContent=`${SECTOR_NAME} · added ${t} — it starts fetching from Yahoo next cycle (~15 min)`;
+  }catch(e){ document.getElementById('statustxt').textContent='couldn’t add ticker'; }
+  finally{ btn.disabled=false; }
+}
+document.getElementById('addTkBtn').onclick=addTicker;
+document.getElementById('addTk').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addTicker(); } });
+
+function selectStock(t){ SECTOR_SEL=t; renderSector(); }
+
+function renderSector(){ renderSecDetail(); renderSecRadial(); renderSecList(); }
+
+function renderSecDetail(){
+  const box=document.getElementById('secDetail');
+  const s=SECTOR_DATA.find(x=>x.name===SECTOR_SEL);
+  if(!s){ box.innerHTML=''; return; }
+  const spot = s.last!=null ? ('$'+s.last) : '—';
+  const hasPin = s.mp!=null;
+  const dist=_distPct(s), days=_daysTo(s.mpExp);
+  const distStr = dist==null?'—':(dist>=0?'+':'')+dist.toFixed(1)+'%';
+  const distCls = dist==null?'':(dist>=0?'up':'down');
+  const flowStr=(s.flow>=0?'+':'')+s.flow.toFixed(2);
+  let note='';
+  if(hasPin && dist!=null){
+    if(dist>0.05) note=`Price ${dist.toFixed(1)}% above the pin — gravitational bias lower into expiry.`;
+    else if(dist<-0.05) note=`Price ${Math.abs(dist).toFixed(1)}% below the pin — gravitational bias higher into expiry.`;
+    else note=`Price sitting right on the pin.`;
+  }
+  const hist=(label,v)=>{
+    if(v==null) return `<div class="sd-hist"><span class="k">${label}</span><span class="v">—</span></div>`;
+    const cls=v>0?'up':v<0?'down':'', arw=v>0?'▲':v<0?'▼':'•', val=(v>0?'+':'')+(Math.round(v*100)/100);
+    return `<div class="sd-hist"><span class="k">${label}</span><span class="v ${cls}">${arw} ${val}</span></div>`;
+  };
+  const calc = s.mpAt? new Date(s.mpAt) : null;
+  box.innerHTML =
+    `<div class="sd-tkr">${escHtml(s.name)} <span>${spot}</span></div>`+
+    `<div class="sd-name">Flow (${SECTOR_KEY}) <b class="${s.flow>=0?'up':'down'}">${flowStr}</b> · net ${fmtCash(s.cash)}</div>`+
+    (hasPin
+      ? `<div class="sd-pin"><div class="k">Max pain${s.mpExp?(' · '+s.mpExp):''}</div><div class="v">$${s.mp}</div></div>`
+      : `<div class="sd-pin"><div class="k">Max pain</div><div class="v" style="font-size:15px;color:var(--muted);font-weight:600">computing…</div></div>`)+
+    `<div class="sd-row"><span class="k">Spot</span><span class="v">${spot}</span></div>`+
+    `<div class="sd-row"><span class="k">Distance to pin</span><span class="v ${distCls}">${distStr}</span></div>`+
+    `<div class="sd-row"><span class="k">Expiry</span><span class="v">${s.mpExp||'—'}${days!=null?` · ${days}d`:''}</span></div>`+
+    (note?`<div class="sd-note">${note}</div>`:'')+
+    `<div class="sd-hist-h">Max-pain history</div>`+
+    hist('vs last calc', s.vsLast)+hist('vs 1 day ago', s.vs1d)+hist('vs 1 week ago', s.vs1w)+
+    (calc?`<div class="sd-foot">calculated ${String(calc.getHours()).padStart(2,'0')}:${String(calc.getMinutes()).padStart(2,'0')} · held until next refresh</div>`:'');
+}
+
+function renderSecList(){
+  const box=document.getElementById('secList');
+  const rows=_sortRows(SECTOR_DATA);
+  const opt=(v,l)=>`<option value="${v}" ${SECTOR_SORT===v?'selected':''}>${l}</option>`;
+  let html=`<div class="sl-head"><span>All stocks</span><select class="sl-sort" id="slSort">`+
+    opt('flow','sort: flow')+opt('distance','sort: distance')+opt('money','sort: money')+opt('ticker','sort: ticker')+`</select></div>`;
+  html+=rows.map(s=>{
+    const dist=_distPct(s);
+    const distStr=dist==null?'—':(dist>=0?'+':'')+dist.toFixed(1)+'%';
+    const distCls=dist==null?'':(dist>=0?'up':'down');
+    return `<div class="sl-row ${s.name===SECTOR_SEL?'sel':''}" data-t="${escHtml(s.name)}">`+
+      `<div><div class="sl-tkr">${escHtml(s.name)}</div><div class="sl-sub">${s.last!=null?'$'+s.last:'—'}</div></div>`+
+      `<div class="sl-right"><div class="sl-chg ${distCls}">${distStr}</div><div class="sl-pin">${s.mp!=null?'pin $'+s.mp:'pin —'}</div></div>`+
+      `</div>`;
+  }).join('');
+  box.innerHTML=html;
+  box.querySelectorAll('.sl-row').forEach(el=>el.onclick=()=>selectStock(el.dataset.t));
+  const sel=document.getElementById('slSort'); if(sel) sel.onchange=()=>{ SECTOR_SORT=sel.value; renderSecList(); };
+}
+
+function renderSecRadial(){
+  const svg=document.getElementById('secSvg'); svg.innerHTML='';
+  const rows=[...SECTOR_DATA].sort((a,b)=>b.flow-a.flow);
+  const n=rows.length; if(!n) return;
+  const CX=500, CY=500, R=360, HUBR=66;
+  const defs=el('defs');
+  [['sin','var(--in)'],['sout','var(--out)']].forEach(([id,col])=>{
+    const m=el('marker',{id,viewBox:'0 0 10 10',refX:'8',refY:'5',markerWidth:'7',markerHeight:'7',orient:'auto-start-reverse'});
+    m.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:col})); defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+  rows.forEach((d,i)=>{
+    const ang=(-90+i*(360/n))*Math.PI/180, dx=Math.cos(ang), dy=Math.sin(ang);
+    const inflow=d.flow>=0, col=inflow?'var(--in)':'var(--out)', sel=d.name===SECTOR_SEL;
+    const x0=CX+dx*(HUBR+6), y0=CY+dy*(HUBR+6), nx=CX+dx*R, ny=CY+dy*R;
+    const w=2+Math.abs(d.flow)*7;
+    const g=el('g',{style:'cursor:pointer'}); g.dataset.t=d.name;
+    const a=inflow?[x0,y0]:[nx,ny], b=inflow?[nx,ny]:[x0,y0];
+    g.appendChild(el('line',{x1:a[0],y1:a[1],x2:b[0],y2:b[1],stroke:col,'stroke-width':w,
+      'stroke-opacity':sel?0.95:0.45,'marker-end':`url(#${inflow?'sin':'sout'})`,'stroke-linecap':'round'}));
+    const mx=CX+dx*(R*0.5), my=CY+dy*(R*0.5);
+    let rot=ang*180/Math.PI; if(rot>90||rot<-90) rot+=180;
+    const lbl=el('text',{x:mx,y:my,'text-anchor':'middle',fill:col,'font-size':'13','font-weight':'800',
+      transform:`rotate(${rot} ${mx} ${my})`,style:'paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round'});
+    lbl.textContent=(d.flow>=0?'+':'')+d.flow.toFixed(2); g.appendChild(lbl);
+    g.appendChild(el('circle',{cx:nx,cy:ny,r:sel?13:8,fill:sel?col:'var(--panel)',stroke:col,'stroke-width':sel?3:2}));
+    const right=dx>=0, anchor=Math.abs(dx)<0.25?'middle':(right?'start':'end');
+    const lx=CX+dx*(R+20), ly=CY+dy*(R+20);
+    const tk=el('text',{x:lx,y:ly-3,'text-anchor':anchor,'font-size':'12','font-weight':'700',fill:sel?col:'var(--ink)'}); tk.textContent=d.name; g.appendChild(tk);
+    const sub=el('text',{x:lx,y:ly+10,'text-anchor':anchor,'font-size':'9.5',fill:'var(--muted)'});
+    sub.textContent=(d.last!=null?'$'+d.last:'')+(d.mp!=null?'  pin $'+d.mp:''); g.appendChild(sub);
+    g.addEventListener('click',()=>selectStock(d.name));
+    svg.appendChild(g);
+  });
+  svg.appendChild(el('circle',{cx:CX,cy:CY,r:HUBR,class:'hub'}));
+  const h=el('text',{x:CX,y:CY+6,'text-anchor':'middle',fill:'var(--hubink)','font-size':'20','font-weight':'800'});
+  h.textContent=_abbrev(SECTOR_NAME); svg.appendChild(h);
+}
+
 function backToMain(){
   VIEW='main'; SECTOR_NAME=null;
   document.getElementById('controls').style.display='';
   const sc=document.getElementById('sectorControls'); if(sc) sc.style.display='none';
-  const ep=document.querySelector('.events-panel'); if(ep) ep.style.display='';
+  document.getElementById('sectorView').classList.remove('on');
+  document.querySelector('.mainrow').style.display='';
+  document.querySelectorAll('.legend,.note').forEach(e=>e.style.display='');
   document.getElementById('backBtn').style.display='none';
   document.getElementById('h1').textContent='Market Flow Map';
   render(); renderStatus();
@@ -397,8 +615,8 @@ async function loadLive(){
     const j=await r.json();
     if(j && j.sectors && j.sectors.length){
       LIVE_DATA=j.sectors.map(x=>({name:x.sector, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1)}));
-      LIVE_STATUS={fetched:j.fetched, total:j.total_symbols, updated:Date.parse(j.updated)||Date.now()};
-      if(currentPeriod==='Live') setPeriod('Live');
+      LIVE_STATUS={fetched:j.fetched, total:j.total_symbols, updated:Date.parse(j.updated)||Date.now(), stale:!!j.stale};
+      if(currentPeriod==='Live' && VIEW==='main') setPeriod('Live');
     }
   }catch(e){}
 }
@@ -469,10 +687,14 @@ function render(){
   const rows=[...(VIEW==='sector'?SECTOR_DATA:current)].sort((a,b)=>b.flow-a.flow);
   const n=rows.length;
   const maxTotal=Math.max(...rows.map(r=>r.total));
-  let total=0;
+  // hub total: GICS sectors only in the market view (avoids double-counting the
+  // overlapping theme baskets); in a sector view it's the sum of its stocks.
+  let total = (VIEW==='sector')
+    ? rows.reduce((a,d)=>a+d.cash,0)
+    : (rows.some(d=>GICS.has(d.name)) ? rows.filter(d=>GICS.has(d.name)).reduce((a,d)=>a+d.cash,0)
+                                      : rows.reduce((a,d)=>a+d.cash,0));
 
   rows.forEach((d,i)=>{
-    total+=d.cash;
     const ang=(-90 + i*(360/n))*Math.PI/180;
     const dirx=Math.cos(ang), diry=Math.sin(ang);
     const inflow=d.flow>=0;
@@ -563,7 +785,7 @@ function render(){
   const t1=el("text",{x:CX,y:CY-24,class:"hub-lbl hub-title"}); t1.textContent=(VIEW==='sector'?SECTOR_NAME.toUpperCase()+" · NET FLOW":"MARKET · NET FLOW");
   const val=el("text",{x:CX,y:CY+8,class:"hub-lbl hub-val",fill:total>=0?"var(--in)":"var(--out)"});
   val.textContent=fmtCash(total);
-  const t2=el("text",{x:CX,y:CY+30,class:"hub-lbl hub-cap"}); t2.textContent=(VIEW==='sector'?"its stocks":"today · all sectors");
+  const t2=el("text",{x:CX,y:CY+30,class:"hub-lbl hub-cap"}); t2.textContent=(VIEW==='sector'?"its stocks":"GICS sectors · money flow");
   svg.appendChild(t1); svg.appendChild(val); svg.appendChild(t2);
 }
 

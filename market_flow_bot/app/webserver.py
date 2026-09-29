@@ -26,6 +26,18 @@ _LATEST_PATH = ("/data/latest.json" if os.path.isdir("/data")
 _ENGINE = None   # PeriodEngine, set by start()
 
 
+def _parse_range(frm: str, to: str):
+    """(start_ts, end_ts) from ISO date/datetime strings, with the end made
+    INCLUSIVE: a bare 'to' date covers that whole day, so from==to returns the
+    full day instead of a zero-length window."""
+    from datetime import datetime, timedelta, timezone
+    start = datetime.fromisoformat(frm).replace(tzinfo=timezone.utc)
+    end = datetime.fromisoformat(to).replace(tzinfo=timezone.utc)
+    if len(to) <= 10:          # bare date (YYYY-MM-DD) -> include the end day
+        end = end + timedelta(days=1)
+    return start.timestamp(), end.timestamp()
+
+
 def write_latest(payload: dict) -> None:
     """Called by the main loop each cycle to publish the current snapshot."""
     try:
@@ -49,7 +61,26 @@ class _Handler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
         if path == "/api/events":
             from . import events as _ev
+            if (parse_qs(parsed.query).get("refresh") or [None])[0]:
+                try:                       # manual refresh button -> re-pull now
+                    _ev.refresh()
+                    _ev.enrich_actuals()
+                except Exception as exc:   # noqa: BLE001 - serve last cache on failure
+                    log.warning("manual events refresh failed: %s", exc)
             return self._send(200, json.dumps(_ev.load()).encode(), "application/json")
+        if path == "/api/watch":
+            from . import watchlist as _wl
+            q = parse_qs(parsed.query)
+            sector = (q.get("sector") or [""])[0]
+            add = (q.get("add") or [None])[0]
+            rem = (q.get("remove") or [None])[0]
+            if add:
+                data = _wl.add(sector, add)
+            elif rem:
+                data = _wl.remove(sector, rem)
+            else:
+                data = _wl.load()
+            return self._send(200, json.dumps({"watchlist": data}).encode(), "application/json")
         if path == "/api/sector":
             if _ENGINE is None:
                 return self._send(200, b'{"error":"engine not ready"}', "application/json")
@@ -61,9 +92,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 start = end = None
                 if frm and to:
-                    from datetime import datetime, timezone
-                    start = datetime.fromisoformat(frm).replace(tzinfo=timezone.utc).timestamp()
-                    end = datetime.fromisoformat(to).replace(tzinfo=timezone.utc).timestamp()
+                    start, end = _parse_range(frm, to)
                 snap = _ENGINE.sector_detail(name, period=period, start=start, end=end)
                 return self._send(200, json.dumps(snap).encode(), "application/json")
             except Exception as exc:  # noqa: BLE001
@@ -88,9 +117,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 start = end = None
                 if frm and to:
-                    from datetime import datetime, timezone
-                    start = datetime.fromisoformat(frm).replace(tzinfo=timezone.utc).timestamp()
-                    end = datetime.fromisoformat(to).replace(tzinfo=timezone.utc).timestamp()
+                    start, end = _parse_range(frm, to)
                 snap = _ENGINE.get(period=period, start=start, end=end)
                 return self._send(200, json.dumps(snap).encode(), "application/json")
             except Exception as exc:  # noqa: BLE001

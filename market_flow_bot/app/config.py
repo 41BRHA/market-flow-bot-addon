@@ -45,6 +45,13 @@ class AlertCfg:
     min_rvol: float = 1.0            # volume must be this x its baseline to alert
     min_density: float = 0.5         # fraction of the window that must have traded (kills thin pre-market)
     suppress_startup: bool = True    # no alerts on the first cycle after a restart
+    # price-move alerts (separate from the flow signals above)
+    alert_on_sector_move: bool = True   # notify when a sector's average % move crosses the threshold
+    sector_move_pct: float = 2.0        # |sector avg %| to alert
+    alert_on_stock_move: bool = True    # notify when a single stock's % move crosses the threshold
+    stock_move_pct: float = 7.0         # |stock %| to alert
+    move_reference: str = "prev_close"  # "prev_close" (incl. overnight gap) or "session_open"
+    move_cooldown_minutes: int = 240    # per-symbol quiet period so a big move isn't re-alerted every cycle
 
 
 @dataclass

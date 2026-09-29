@@ -19,7 +19,7 @@ import csv
 import io
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import requests
 
@@ -70,6 +70,32 @@ def _fred_series(series_id: str):
         return []
 
 
+# ---- freshness gate --------------------------------------------------------
+# The government API can lag the printed release: filling an event's "actual"
+# from a series that hasn't updated yet would label an OLD month/quarter as the
+# new number (and it's then retained). So only fill when the newest data point
+# is recent enough to plausibly BE the release we're waiting on.
+MONTHLY_MAX_DAYS = 70
+QUARTERLY_MAX_DAYS = 150
+
+def _fresh_bls(series, max_days=MONTHLY_MAX_DAYS) -> bool:
+    if not series:
+        return False
+    y, m, _ = series[0]                            # newest-first
+    try:
+        return (datetime.now(timezone.utc).date() - date(y, m, 1)).days <= max_days
+    except Exception:  # noqa: BLE001
+        return False
+
+def _fresh_fred(series, max_days=MONTHLY_MAX_DAYS) -> bool:
+    if not series:
+        return False
+    try:
+        return (datetime.now(timezone.utc).date() - date.fromisoformat(series[-1][0])).days <= max_days
+    except Exception:  # noqa: BLE001
+        return False
+
+
 # ---- per-event actuals -----------------------------------------------------
 def _mom(series):
     return None if len(series) < 2 else (series[0][2] / series[1][2] - 1) * 100
@@ -78,20 +104,29 @@ def _yoy(series):
     return None if len(series) < 13 else (series[0][2] / series[12][2] - 1) * 100
 
 def cpi_mom():
-    v = _mom(_bls_series("CUSR0000SA0"))           # CPI-U, seasonally adjusted
+    s = _bls_series("CUSR0000SA0")                 # CPI-U, seasonally adjusted
+    if not _fresh_bls(s):
+        return None
+    v = _mom(s)
     return None if v is None else f"{v:+.1f}% MoM"
 
 def cpi_yoy():
-    v = _yoy(_bls_series("CUUR0000SA0"))           # CPI-U, NSA (YoY basis)
+    s = _bls_series("CUUR0000SA0")                 # CPI-U, NSA (YoY basis)
+    if not _fresh_bls(s):
+        return None
+    v = _yoy(s)
     return None if v is None else f"{v:.1f}% YoY"
 
 def core_cpi_mom():
-    v = _mom(_bls_series("CUSR0000SA0L1E"))         # Core CPI SA
+    s = _bls_series("CUSR0000SA0L1E")               # Core CPI SA
+    if not _fresh_bls(s):
+        return None
+    v = _mom(s)
     return None if v is None else f"{v:+.1f}% MoM"
 
 def nfp():
     s = _bls_series("CES0000000001")               # Total nonfarm payrolls (level, thousands)
-    if len(s) < 2:
+    if len(s) < 2 or not _fresh_bls(s):
         return None
     chg = (s[0][2] - s[1][2]) * 1000
     return f"{chg:+,.0f}"
@@ -113,7 +148,9 @@ def fomc_rate():
 
 def _fred_mom(sid):
     s = _fred_series(sid)
-    return None if len(s) < 2 else (s[-1][1] / s[-2][1] - 1) * 100
+    if len(s) < 2 or not _fresh_fred(s):
+        return None
+    return (s[-1][1] / s[-2][1] - 1) * 100
 
 def pce_mom():
     v = _fred_mom("PCEPI")
@@ -125,7 +162,9 @@ def core_pce_mom():
 
 def gdp():
     s = _fred_series("A191RL1Q225SBEA")             # real GDP, annualised QoQ %
-    return None if not s else f"{s[-1][1]:+.1f}% (annualised)"
+    if not s or not _fresh_fred(s, QUARTERLY_MAX_DAYS):
+        return None
+    return f"{s[-1][1]:+.1f}% (annualised)"
 
 
 # title predicate -> fetcher (first match wins)

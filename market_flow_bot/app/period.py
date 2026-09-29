@@ -110,9 +110,13 @@ class PeriodEngine:
             got = self.provider.get_range(syms, interval, gs, ge)
             for sym, df in got.items():
                 self.store.put_bars(res, sym, df)
-            if got:  # fetch worked -> the whole requested range is now covered for all
-                for sym in syms:
-                    self.store.record_coverage(res, sym, gs, ge)
+            # Mark the FULL requested window covered ONLY for symbols we actually
+            # received — this still absorbs intra-window weekend/holiday gaps (a
+            # symbol that traded gets its whole window marked), but a ticker whose
+            # download FAILED stays 'missing' and is retried, instead of being
+            # silently treated as permanently empty.
+            for sym in got:
+                self.store.record_coverage(res, sym, gs, ge)
 
     # ---- the actual compute (may hit Yahoo; runs off the request thread) -
     def _compute(self, period=None, start=None, end=None) -> dict:
@@ -226,7 +230,7 @@ class PeriodEngine:
         period view already fetched the bars), so this never blocks on Yahoo —
         which also means the drill-down stays meaningful after the US close,
         instead of collapsing every stock to $0 in an empty live window."""
-        from .signals import _stock_flow
+        from .signals import _stock_flow, contract_mult
         sectors = self.get_sectors()
         sec = next((s for s in sectors if s.name == name), None)
         if sec is None:
@@ -246,7 +250,7 @@ class PeriodEngine:
                 stocks.append({"ticker": sym, "last": None, "flow": 0.0,
                                "net_dollar": 0, "gross": 0, "ts": None})
                 continue
-            net, gross = _stock_flow(df, None)
+            net, gross = _stock_flow(df, None, contract_mult(sym))
             stocks.append({
                 "ticker": sym,
                 "last": round(float(df["close"].iloc[-1]), 2),

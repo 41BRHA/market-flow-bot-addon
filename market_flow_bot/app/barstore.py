@@ -57,7 +57,14 @@ class BarStore:
         c = self.conn
         c.execute("""CREATE TABLE IF NOT EXISTS bars(
                        res TEXT, symbol TEXT, ts REAL, close REAL, volume REAL,
+                       high REAL, low REAL,
                        PRIMARY KEY(res, symbol, ts))""")
+        # migrate older DBs (close/volume only) — add high/low as nullable
+        have = {r[1] for r in c.execute("PRAGMA table_info(bars)").fetchall()}
+        if "high" not in have:
+            c.execute("ALTER TABLE bars ADD COLUMN high REAL")
+        if "low" not in have:
+            c.execute("ALTER TABLE bars ADD COLUMN low REAL")
         c.execute("""CREATE TABLE IF NOT EXISTS coverage(
                        res TEXT, symbol TEXT, start_ts REAL, end_ts REAL)""")
         c.execute("CREATE INDEX IF NOT EXISTS idx_bars ON bars(res, symbol, ts)")
@@ -67,7 +74,8 @@ class BarStore:
     # ---- bars ----
     def put_bars(self, res: str, symbol: str, df: pd.DataFrame) -> int:
         """Store a symbol's bars. df indexed by tz-aware datetime (or epoch),
-        with columns close, volume. Records coverage over the df's span."""
+        with columns close, volume, and (optionally) high, low. Records coverage
+        over the df's span."""
         if df is None or df.empty:
             return 0
         idx = df.index
@@ -76,11 +84,15 @@ class BarStore:
             epochs = (dt.astype("datetime64[ns]").astype("int64") // 1_000_000_000).tolist()
         else:
             epochs = [float(x) for x in idx]              # already epoch seconds
-        rows = [(res, symbol, float(t), float(c), float(v))
-                for t, c, v in zip(epochs, df["close"].to_numpy(), df["volume"].to_numpy())
+        n = len(epochs)
+        highs = df["high"].to_numpy() if "high" in df.columns else [None] * n
+        lows = df["low"].to_numpy() if "low" in df.columns else [None] * n
+        rows = [(res, symbol, float(t), float(c), float(v),
+                 (float(h) if pd.notna(h) else None), (float(l) if pd.notna(l) else None))
+                for t, c, v, h, l in zip(epochs, df["close"].to_numpy(), df["volume"].to_numpy(), highs, lows)
                 if pd.notna(c)]
         with self._lock:
-            self.conn.executemany("INSERT OR REPLACE INTO bars VALUES(?,?,?,?,?)", rows)
+            self.conn.executemany("INSERT OR REPLACE INTO bars VALUES(?,?,?,?,?,?,?)", rows)
             self.conn.commit()
             if rows:
                 self.record_coverage(res, symbol, min(r[2] for r in rows), max(r[2] for r in rows))
@@ -89,13 +101,16 @@ class BarStore:
     def get_bars(self, res: str, symbol: str, start_ts: float, end_ts: float) -> pd.DataFrame:
         with self._lock:
             cur = self.conn.execute(
-                "SELECT ts, close, volume FROM bars WHERE res=? AND symbol=? AND ts>=? AND ts<=? ORDER BY ts",
+                "SELECT ts, close, volume, high, low FROM bars WHERE res=? AND symbol=? AND ts>=? AND ts<=? ORDER BY ts",
                 (res, symbol, start_ts, end_ts))
             data = cur.fetchall()
         if not data:
-            return pd.DataFrame(columns=["close", "volume"])
+            return pd.DataFrame(columns=["close", "volume", "high", "low"])
         ts = pd.to_datetime([d[0] for d in data], unit="s", utc=True)
-        return pd.DataFrame({"close": [d[1] for d in data], "volume": [d[2] for d in data]}, index=ts)
+        return pd.DataFrame({
+            "close": [d[1] for d in data], "volume": [d[2] for d in data],
+            "high": [d[3] for d in data], "low": [d[4] for d in data],
+        }, index=ts)
 
     # ---- coverage / gap finding ----
     def coverage_of(self, res: str, symbol: str) -> list[tuple[float, float]]:

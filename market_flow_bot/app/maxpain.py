@@ -18,6 +18,7 @@ snapshot, not live order flow — good for "where's the pin", not "who just boug
 from __future__ import annotations
 
 import logging
+import math
 import os
 import queue
 import sqlite3
@@ -25,6 +26,16 @@ import threading
 import time
 
 log = logging.getLogger("maxpain")
+
+
+def _oi(v) -> float:
+    """Open interest as a finite float; NaN/blank/None -> 0. A NaN slipping into
+    the sum poisons the min-search and returns the wrong strike."""
+    try:
+        x = float(v)
+        return x if math.isfinite(x) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
 
 REFRESH_MIN_AGE = 3600      # don't recompute a ticker more often than hourly
 PACING = 1.5               # seconds between tickers (polite to Yahoo)
@@ -39,6 +50,10 @@ def max_pain_from_chain(call_oi: list[tuple[float, float]],
     strikes = sorted({k for k, _ in call_oi} | {k for k, _ in put_oi})
     if not strikes:
         return None
+    # coerce any NaN/inf open interest to 0 up front — a single NaN in the sum
+    # makes every `total < best_val` comparison False and freezes the search.
+    call_oi = [(k, oi if math.isfinite(oi) else 0.0) for k, oi in call_oi]
+    put_oi = [(k, oi if math.isfinite(oi) else 0.0) for k, oi in put_oi]
     best_strike, best_val = None, None
     for s in strikes:
         total = 0.0
@@ -90,9 +105,14 @@ class MaxPainStore:
             return None
         ts, expiry, mp, spot = rows[0]
         now = time.time()
-        prev = rows[1][2] if len(rows) > 1 else None
-        d1 = self._closest_before(rows, now - 86400)
-        w1 = self._closest_before(rows, now - 7 * 86400)
+        # Only compare like-for-like: the max-pain of the SAME expiry. As the
+        # nearest expiry rolls, last week's row is a different contract, so a raw
+        # cross-expiry "vs 1 week" would be apples-to-oranges (returns None when
+        # there's no same-expiry point that far back, which is the honest answer).
+        same = [r for r in rows if r[1] == expiry]
+        prev = same[1][2] if len(same) > 1 else None
+        d1 = self._closest_before(same, now - 86400)
+        w1 = self._closest_before(same, now - 7 * 86400)
         def delta(a, b):
             return None if (a is None or b is None) else round(a - b, 2)
         return {
@@ -152,9 +172,9 @@ class MaxPainWorker:
                     return None
                 expiry = exps[0]                       # nearest expiry
                 chain = tk.option_chain(expiry)
-                call_oi = [(float(r.strike), float(r.openInterest or 0))
+                call_oi = [(float(r.strike), _oi(r.openInterest))
                            for r in chain.calls.itertuples()]
-                put_oi = [(float(r.strike), float(r.openInterest or 0))
+                put_oi = [(float(r.strike), _oi(r.openInterest))
                           for r in chain.puts.itertuples()]
                 mp = max_pain_from_chain(call_oi, put_oi)
                 if mp is None:
