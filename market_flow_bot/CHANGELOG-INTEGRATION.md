@@ -1,3 +1,9 @@
+# 0.16.1
+
+- Display current official congressional role, party, state/district, committee assignments, leadership positions and relevant oversight areas beside disclosure names.
+- Missing prices and valuation fields now display as pending/unavailable instead of `$0.00` or `0.0×`.
+- Smart Money now reports whether its Market Flow price link is connected, waiting or unavailable.
+
 # 0.16.0
 
 - Added a non-blocking `/api/trade-prices` bridge backed by Market Flow's existing bar store. It estimates a disclosure's trade price from the daily close on the transaction date or next trading session and compares it with the newest cached price.

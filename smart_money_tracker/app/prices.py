@@ -11,6 +11,7 @@ class PriceBridge:
     def __init__(self, base_url):
         self.base_url=str(base_url or '').rstrip('/')
         self.cache={};self.lock=threading.Lock()
+        self.last_success=None;self.last_error=None
 
     @staticmethod
     def _key(trade):
@@ -24,6 +25,7 @@ class PriceBridge:
             raw=response.read(1_000_001)
         if len(raw)>1_000_000:raise ValueError('Price response too large')
         data=json.loads(raw)
+        if not isinstance(data,dict) or data.get('error'):raise RuntimeError('Market Flow price endpoint unavailable')
         return data.get('prices',{}) if isinstance(data,dict) else {}
 
     def enrich(self,trades):
@@ -37,14 +39,21 @@ class PriceBridge:
                 ttl=5 if cached and cached[1].get('pending') else 60
                 if cached and now-cached[0]<ttl:found[key]=cached[1]
                 else:needed.append(key)
+        failed=False
         for i in range(0,len(needed),75):
             batch=needed[i:i+75]
-            try:received=self._fetch(batch)
-            except Exception:received={}
+            try:
+                received=self._fetch(batch);self.last_success=time.time();self.last_error=None
+            except Exception as exc:
+                received={};self.last_error=type(exc).__name__;failed=True
             with self.lock:
                 for key in batch:
                     value=received.get(key,{'pending':True})
                     self.cache[key]=(now,value);found[key]=value
+            if failed:
+                with self.lock:
+                    for key in needed[i+75:]:self.cache[key]=(now,{'pending':True});found[key]={'pending':True}
+                break
         for trade in out:
             price=found.get(self._key(trade),{})
             trade['estimated_price']=price.get('estimated_price')
@@ -59,6 +68,11 @@ class PriceBridge:
             except (TypeError,ValueError,ZeroDivisionError):
                 trade['directional_return_pct']=None
         return out
+
+    def status(self):
+        if not self.base_url:return {'state':'not_configured'}
+        if self.last_success:return {'state':'connected','last_success':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(self.last_success)),'last_error':self.last_error}
+        return {'state':'unavailable' if self.last_error else 'waiting','last_error':self.last_error}
 
 
 def politician_score(trades):

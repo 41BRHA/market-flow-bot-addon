@@ -6,10 +6,11 @@ from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 from .core import Store,import_csv
 from .prices import PriceBridge,politician_score
+from .profiles import ProfileService
 from .sync import Collector
 
 
-def make_handler(store,collector,prices=None):
+def make_handler(store,collector,prices=None,profiles=None):
     class Handler(BaseHTTPRequestHandler):
         def send(self,code,obj,ctype='application/json'):
             body=obj if isinstance(obj,bytes) else json.dumps(obj,allow_nan=False).encode()
@@ -39,7 +40,12 @@ def make_handler(store,collector,prices=None):
                         for group in grouped['disclosures']:
                             group['trades']=[by_id.get(t.get('id'),t) for t in group['trades']]
                             group['score']=politician_score(by_person.get(group['politician'],[]))
+                            if profiles is not None:
+                                district=group['trades'][0].get('district','') if group['trades'] else ''
+                                group['profile']=profiles.get(group['politician'],group.get('chamber',''),district)
                         result.update(grouped)
+                    if prices is not None:result['price_link']=prices.status()
+                    if profiles is not None:result['profile_status']=profiles.status()
                     result['status']=store.status();return self.send(200,result)
                 if p.path=='/api/template.csv':
                     return self.send(200,b'ticker,politician,chamber,action,transaction_date,disclosure_date,amount,source_url,owner,asset,asset_type,notes\n','text/csv')
@@ -79,6 +85,7 @@ def run():
     options=json.loads(options_path.read_text()) if options_path.exists() else {}
     store=Store(str(base/'disclosures.db'));collector=Collector(store,options);collector.start()
     prices=PriceBridge(options.get('market_flow_url','http://local-market-flow-bot:8099'))
-    ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices)).serve_forever()
+    profiles=ProfileService(str(base/'politician_profiles.json'))
+    ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices,profiles)).serve_forever()
 
 if __name__=='__main__': run()

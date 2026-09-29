@@ -2,9 +2,9 @@
 
 This bundle contains:
 
-- **Market Flow Bot 0.16.0**: market flow, company valuation and the linked politician-disclosure panel in each stock detail view.
-- **Smart Money Tracker 0.2.0**: a linked Home Assistant add-on with its own disclosure database and dashboard.
-- **REVIEW-v0.16.0.md**: the implementation, score formula, corrections, limits and Claude review handover.
+- **Market Flow Bot 0.16.1**: market flow, company valuation and the linked politician-disclosure panel in each stock detail view.
+- **Smart Money Tracker 0.2.1**: a linked Home Assistant add-on with its own disclosure database and dashboard.
+- **REVIEW-v0.16.1.md**: the implementation, score formula, corrections, limits and Claude review handover.
 - **tests/**: automated checks and two official public PDF fixtures.
 
 ## Install locally in Home Assistant
@@ -77,9 +77,9 @@ Manual source checks are limited to once per minute. Failed/partial House report
 
 ## Review and validation
 
-Read REVIEW-v0.16.0.md for the score formula, price architecture, calculation corrections and remaining limits.
+Read REVIEW-v0.16.1.md for the score formula, price architecture, calculation corrections and remaining limits.
 
-29 Python tests pass, including two official PDF fixtures and regression tests for grouping, pricing, scoring and market calculations. Six recent official PDFs were exercised, yielding 83 ticker-linked records; this is a small parsing sample, not proof of complete coverage. Both dashboard scripts pass JavaScript syntax checks. DOM interaction tests verified grouped disclosure expansion, selector filtering, prices, scores, company valuation, source links and ticker switching without script errors. Browser visual validation could not run because the browser binary download failed in the build environment. A Home Assistant/Docker deployment and authenticated Senate fetch still need testing on your installation.
+30 Python tests pass, including two official PDF fixtures and regression tests for grouping, pricing, scoring, official profile mapping and market calculations. Six recent official PDFs were exercised, yielding 83 ticker-linked records; this is a small parsing sample, not proof of complete coverage. Both dashboard scripts pass JavaScript syntax checks. DOM interaction tests verified grouped disclosure expansion, selector filtering, prices, scores, official roles, company valuation, source links and ticker switching without script errors. Browser visual validation could not run because the browser binary download failed in the build environment. A Home Assistant/Docker deployment and authenticated Senate fetch still need testing on your installation.
 
 Run tests from this bundle's root with Python 3.12 and the application dependencies installed:
 

@@ -548,7 +548,7 @@ function renderSecDetail(){
 }
 
 function fmtLargeNumber(v,currency){
-  if(!Number.isFinite(Number(v)))return '—';
+  if(v===null||v===undefined||v===''||!Number.isFinite(Number(v)))return '—';
   const n=Number(v),a=Math.abs(n),unit=a>=1e12?'T':a>=1e9?'B':a>=1e6?'M':'',div=unit==='T'?1e12:unit==='B'?1e9:unit==='M'?1e6:1;
   return (currency==='USD'?'$':currency==='GBP'?'£':currency==='EUR'?'€':'')+(n/div).toFixed(unit?1:0)+unit;
 }
@@ -566,9 +566,10 @@ async function loadFundamentals(ticker){
   const name=document.getElementById('companyName'),box=document.getElementById('fundamentals');if(!name||!box)return;
   name.textContent=f.name||ticker;
   if(f.pending&&!f.name){box.innerHTML=metric('Valuation','Loading…');setTimeout(()=>{if(VIEW==='sector'&&SECTOR_SEL===ticker)loadFundamentals(ticker)},5500);return;}
-  const ratio=v=>Number.isFinite(Number(v))?Number(v).toFixed(1)+'×':'—';
-  const pct=v=>Number.isFinite(Number(v))?(Number(v)*100).toFixed(1)+'%':'—';
-  const range=Number.isFinite(Number(f.week_52_low))&&Number.isFinite(Number(f.week_52_high))?'$'+Number(f.week_52_low).toFixed(2)+' – $'+Number(f.week_52_high).toFixed(2):'—';
+  const valid=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+  const ratio=v=>valid(v)?Number(v).toFixed(1)+'×':'—';
+  const pct=v=>valid(v)?(Number(v)*100).toFixed(1)+'%':'—';
+  const range=valid(f.week_52_low)&&valid(f.week_52_high)?'$'+Number(f.week_52_low).toFixed(2)+' – $'+Number(f.week_52_high).toFixed(2):'—';
   box.innerHTML=metric('Market cap',fmtLargeNumber(f.market_cap,f.currency))+metric('Trailing P/E',ratio(f.trailing_pe))+
     metric('Forward P/E',ratio(f.forward_pe))+metric('Price / book',ratio(f.price_to_book))+
     metric('Profit margin',pct(f.profit_margin))+metric('Revenue growth',pct(f.revenue_growth))+
@@ -593,8 +594,10 @@ async function loadPoliticianTrades(ticker){
   const coverage=`House: ${h.state||'starting'} · ${counts.pending||0} reports pending. Senate: ${sen.state||'not configured'}.`;
   const rows=j.trades||[],groups=j.disclosures||[];
   const safeLink=v=>{try{const u=new URL(v);return u.protocol==='https:'?u.href:''}catch{return ''}};
+  const hasNumber=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+  const politicianProfile=g=>{const p=g.profile||{},areas=(p.responsibilities||[]).join('; '),committees=(p.committees||[]).map(c=>(c.leadership?c.leadership+' — ':'')+c.name).join(' · ');return `<div class="sd-foot">${escHtml(p.title||g.chamber)}</div>`+(areas||committees?`<div class="sd-note"><b>Current official role</b>${areas?`<br>Relevant oversight: ${escHtml(areas)}`:''}${committees?`<br>Committees: ${escHtml(committees)}`:''}</div>`:'');};
   box.innerHTML=heading+'<div class="sd-foot">'+escHtml(coverage)+'</div><div class="sd-foot">Reported ranges · latest disclosures, independent of the flow period.</div>'+
-    (groups.length?groups.map((g,i)=>{const sc=g.score||{};return `<details style="padding:10px 0;border-bottom:1px solid var(--line)"><summary><b>${escHtml(g.politician)}</b><div class="sd-foot" style="display:inline;margin-left:5px">${escHtml(g.disclosure_date)} · ${g.trade_count} trade${g.trade_count===1?'':'s'} · score ${Number.isFinite(Number(sc.score))?Number(sc.score).toFixed(1):'—'}</div></summary>${g.trades.map(t=>{const link=safeLink(t.source_url),dr=Number.isFinite(Number(t.directional_return_pct))?((Number(t.directional_return_pct)>0?'+':'')+Number(t.directional_return_pct).toFixed(2)+'%'):'pricing…';return `<div style="padding:10px 3px;border-top:1px solid var(--line);margin-top:7px"><b class="${t.action==='Buy'?'up':t.action==='Sell'?'down':''}">${escHtml(t.action)}</b> · ${escHtml(t.amount)}<div class="sd-foot">Trade: ${escHtml(t.transaction_date)} · estimated close: ${t.estimated_price!=null?'$'+Number(t.estimated_price).toFixed(2):'pricing…'}<br>Latest: ${t.current_price!=null?'$'+Number(t.current_price).toFixed(2):'pricing…'} · direction-adjusted: ${escHtml(dr)}<br>${escHtml(t.owner)} · ${escHtml(t.asset_type)}</div>${link?`<a style="color:var(--accent);font-size:12px" href="${escHtml(link)}" target="_blank" rel="noopener noreferrer">Original disclosure ↗</a>`:''}</div>`}).join('')}</details>`}).join(''):'<div class="sd-note">No matching disclosures in the records collected so far. Coverage may be incomplete.</div>')+
+    (groups.length?groups.map((g,i)=>{const sc=g.score||{};return `<details style="padding:10px 0;border-bottom:1px solid var(--line)"><summary><b>${escHtml(g.politician)}</b><div class="sd-foot" style="display:inline;margin-left:5px">${escHtml(g.disclosure_date)} · ${g.trade_count} trade${g.trade_count===1?'':'s'} · score ${hasNumber(sc.score)?Number(sc.score).toFixed(1):'—'}</div></summary>${politicianProfile(g)}${g.trades.map(t=>{const link=safeLink(t.source_url),dr=hasNumber(t.directional_return_pct)?((Number(t.directional_return_pct)>0?'+':'')+Number(t.directional_return_pct).toFixed(2)+'%'):'pricing…';return `<div style="padding:10px 3px;border-top:1px solid var(--line);margin-top:7px"><b class="${t.action==='Buy'?'up':t.action==='Sell'?'down':''}">${escHtml(t.action)}</b> · ${escHtml(t.amount)}<div class="sd-foot">Trade: ${escHtml(t.transaction_date)} · estimated close: ${hasNumber(t.estimated_price)?'$'+Number(t.estimated_price).toFixed(2):'pricing…'}<br>Latest: ${hasNumber(t.current_price)?'$'+Number(t.current_price).toFixed(2):'pricing…'} · direction-adjusted: ${escHtml(dr)}<br>${escHtml(t.owner)} · ${escHtml(t.asset_type)}</div>${link?`<a style="color:var(--accent);font-size:12px" href="${escHtml(link)}" target="_blank" rel="noopener noreferrer">Original disclosure ↗</a>`:''}</div>`}).join('')}</details>`}).join(''):'<div class="sd-note">No matching disclosures in the records collected so far. Coverage may be incomplete.</div>')+
     `<div class="sd-foot">Showing ${rows.length} of ${j.total||0}. Open Politician Trades in the sidebar to search all records. Amendments may appear separately.</div>`;
   if(rows.some(t=>t.price_pending))setTimeout(()=>{if(VIEW==='sector'&&SECTOR_SEL===ticker)loadPoliticianTrades(ticker)},5500);
 }

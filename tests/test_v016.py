@@ -4,6 +4,7 @@ import pandas as pd
 
 from smart_money_tracker.app.core import Store,normalise
 from smart_money_tracker.app.prices import PriceBridge,politician_score
+from smart_money_tracker.app.profiles import _house,_senate
 from market_flow_bot.app.barstore import BarStore
 from market_flow_bot.app.maxpain import max_pain_from_chain
 from market_flow_bot.app.period import PeriodEngine
@@ -72,6 +73,12 @@ class V016Tests(unittest.TestCase):
         start,end=_parse_range('2026-09-01T12:00:00+02:00','2026-09-01T13:00:00+02:00')
         self.assertEqual(end-start,3600)
         self.assertEqual(datetime.fromtimestamp(start,timezone.utc).hour,10)
+
+    def test_official_profile_xml_mapping(self):
+        house=b'''<MemberData publish-date="today"><members><member><statedistrict>GA12</statedistrict><member-info><official-name>Rick W. Allen</official-name><bioguideID>A000372</bioguideID><party>R</party><state postal-code="GA"><state-fullname>Georgia</state-fullname></state><district>12th</district></member-info><committee-assignments><committee comcode="AS00" leadership="Chair"/></committee-assignments></member></members><committees><committee comcode="AS00"><committee-fullname>Committee on Armed Services</committee-fullname></committee></committees></MemberData>'''
+        profiles,_=_house(house);self.assertEqual(profiles[0]['seat'],'GA12');self.assertIn('defence policy',profiles[0]['responsibilities'][0]);self.assertIn('Chair',profiles[0]['leadership'][0])
+        senate=b'''<senators><lastUpdate><date>today</date></lastUpdate><senator><name><first>Jane</first><last>Doe</last></name><party>D</party><state>CA</state><bioguideId>D000001</bioguideId><committees><committee code="SSBK00" position="Chair">Committee on Banking, Housing, and Urban Affairs</committee></committees></senator></senators>'''
+        profiles,_=_senate(senate);self.assertEqual(profiles[0]['chamber'],'Senate');self.assertIn('financial markets',profiles[0]['responsibilities'][0])
 
 
 if __name__=='__main__':unittest.main()

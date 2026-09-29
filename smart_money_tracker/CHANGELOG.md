@@ -1,3 +1,10 @@
+# 0.2.1
+
+- Automatic current-member profiles from official House Clerk and Senate XML feeds, refreshed daily and cached locally.
+- Shows office, party, state/district, committee leadership, committee assignments and plain-language oversight areas.
+- Adds visible Market Flow price-link status and prevents repeated multi-batch timeouts when Market Flow is unavailable.
+- Corrects missing prices being rendered as `$0.00`.
+
 # 0.2.0
 
 - One expandable dashboard row per politician and disclosure date.
