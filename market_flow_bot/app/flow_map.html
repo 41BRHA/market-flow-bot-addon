@@ -27,7 +27,7 @@
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased; min-height:100vh;
   }
-  .wrap{max-width:1000px; margin:0 auto; padding:14px 14px 28px}
+  .wrap{max-width:1360px; margin:0 auto; padding:14px 18px 28px}
   header{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px}
   h1{font-size:16px; font-weight:650; letter-spacing:.2px; margin:0}
   .sub{font-size:12px; color:var(--muted); margin-top:3px}
@@ -36,9 +36,9 @@
     border:1px solid var(--line); background:var(--panel); color:var(--ink);
     border-radius:999px; padding:7px 12px; font-size:13px; cursor:pointer; display:flex; gap:6px; align-items:center;
   }
-  .map{width:100%; aspect-ratio:1/1}
-  .mainrow{display:flex; gap:14px; align-items:flex-start; margin-top:6px}
-  .map{flex:1 1 auto; min-width:0}
+  .map{aspect-ratio:1/1}
+  .mainrow{display:flex; gap:14px; align-items:flex-start; justify-content:center; margin-top:6px}
+  .map{flex:0 1 820px; min-width:0; max-height:84vh}
   .events-panel{flex:0 0 268px; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px 12px 10px}
   .ev-head{font-size:12px; font-weight:700; color:var(--muted); letter-spacing:.3px; margin-bottom:8px}
   .ev-list{display:flex; flex-direction:column}
@@ -78,10 +78,10 @@
   /* ---- sector drill-down: three-panel (detail | radial | list) ---- */
   .sectorwrap{display:none; gap:14px; align-items:flex-start; margin-top:8px}
   .sectorwrap.on{display:flex}
-  .sec-detail{flex:0 0 296px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px 16px 14px}
-  .sec-mid{flex:1 1 auto; min-width:0}
-  .sec-map{width:100%; aspect-ratio:1/1}
-  .sec-list{flex:0 0 244px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:8px 8px 10px; align-self:stretch; max-height:74vh; overflow:auto}
+  .sec-detail{flex:0 0 280px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px 16px 14px}
+  .sec-mid{flex:1 1 auto; min-width:0; display:flex; justify-content:center}
+  .sec-map{width:100%; max-width:88vh; aspect-ratio:1/1}
+  .sec-list{flex:0 0 232px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:8px 8px 10px; align-self:stretch; max-height:84vh; overflow:auto}
   @media (max-width:920px){ .sectorwrap.on{flex-direction:column} .sec-detail,.sec-list{flex:none; width:auto; max-height:none} }
   .up{color:var(--in)} .down{color:var(--out)}
   .sd-tkr{font-size:26px; font-weight:800; letter-spacing:.3px}
@@ -561,7 +561,7 @@ function renderSecRadial(){
   const svg=document.getElementById('secSvg'); svg.innerHTML='';
   const rows=[...SECTOR_DATA].sort((a,b)=>b.flow-a.flow);
   const n=rows.length; if(!n) return;
-  const CX=500, CY=500, R=360, HUBR=66;
+  const CX=500, CY=500, R=352, HUBR=76;
   const defs=el('defs');
   [['sin','var(--in)'],['sout','var(--out)']].forEach(([id,col])=>{
     const m=el('marker',{id,viewBox:'0 0 10 10',refX:'8',refY:'5',markerWidth:'7',markerHeight:'7',orient:'auto-start-reverse'});
@@ -579,20 +579,21 @@ function renderSecRadial(){
       'stroke-opacity':sel?0.95:0.45,'marker-end':`url(#${inflow?'sin':'sout'})`,'stroke-linecap':'round'}));
     const mx=CX+dx*(R*0.5), my=CY+dy*(R*0.5);
     let rot=ang*180/Math.PI; if(rot>90||rot<-90) rot+=180;
-    const lbl=el('text',{x:mx,y:my,'text-anchor':'middle',fill:col,'font-size':'13','font-weight':'800',
-      transform:`rotate(${rot} ${mx} ${my})`,style:'paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round'});
+    const lbl=el('text',{x:mx,y:my,'text-anchor':'middle',fill:col,'font-size':'16','font-weight':'800',
+      transform:`rotate(${rot} ${mx} ${my})`,style:'paint-order:stroke;stroke:var(--bg);stroke-width:3.5px;stroke-linejoin:round'});
     lbl.textContent=(d.flow>=0?'+':'')+d.flow.toFixed(2); g.appendChild(lbl);
-    g.appendChild(el('circle',{cx:nx,cy:ny,r:sel?13:8,fill:sel?col:'var(--panel)',stroke:col,'stroke-width':sel?3:2}));
-    const right=dx>=0, anchor=Math.abs(dx)<0.25?'middle':(right?'start':'end');
-    const lx=CX+dx*(R+20), ly=CY+dy*(R+20);
-    const tk=el('text',{x:lx,y:ly-3,'text-anchor':anchor,'font-size':'12','font-weight':'700',fill:sel?col:'var(--ink)'}); tk.textContent=d.name; g.appendChild(tk);
-    const sub=el('text',{x:lx,y:ly+10,'text-anchor':anchor,'font-size':'9.5',fill:'var(--muted)'});
-    sub.textContent=(d.last!=null?'$'+d.last:'')+(d.mp!=null?'  pin $'+d.mp:''); g.appendChild(sub);
+    g.appendChild(el('circle',{cx:nx,cy:ny,r:sel?16:11,fill:sel?col:'var(--panel)',stroke:col,'stroke-width':sel?3.5:2.5}));
+    // ticker only (price/pin live in the list on the right — keeps the wheel legible even at 30 names)
+    const right=dx>=0, anchor=Math.abs(dx)<0.22?'middle':(right?'start':'end');
+    const lx=CX+dx*(R+26), ly=CY+dy*(R+26);
+    const tk=el('text',{x:lx,y:ly+5,'text-anchor':anchor,'font-size':'18','font-weight':'800',
+      fill:sel?col:'var(--ink)',style:'paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round'});
+    tk.textContent=d.name; g.appendChild(tk);
     g.addEventListener('click',()=>selectStock(d.name));
     svg.appendChild(g);
   });
   svg.appendChild(el('circle',{cx:CX,cy:CY,r:HUBR,class:'hub'}));
-  const h=el('text',{x:CX,y:CY+6,'text-anchor':'middle',fill:'var(--hubink)','font-size':'20','font-weight':'800'});
+  const h=el('text',{x:CX,y:CY+8,'text-anchor':'middle',fill:'var(--hubink)','font-size':'26','font-weight':'800'});
   h.textContent=_abbrev(SECTOR_NAME); svg.appendChild(h);
 }
 
