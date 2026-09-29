@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import barstore
 from .signals import flowboard_over
@@ -66,19 +66,18 @@ def _merge(intervals):
 
 class PeriodEngine:
     def __init__(self, get_sectors, benchmark, provider, store: barstore.BarStore,
-                 mp_store=None, mp_worker=None, fund_store=None, fund_worker=None):
+                 mp_store=None, mp_worker=None):
         self.get_sectors = get_sectors      # callable -> current resolved sectors
         self.benchmark = benchmark
         self.provider = provider
         self.store = store
         self.mp_store = mp_store            # MaxPainStore (optional)
         self.mp_worker = mp_worker          # MaxPainWorker (optional)
-        self.fund_store = fund_store        # FundamentalsStore (optional)
-        self.fund_worker = fund_worker      # FundamentalsWorker (optional)
         # snapshot cache
         self._cache: dict[str, dict] = {}   # key -> {"snap": dict, "ts": float}
         self._inflight: set[str] = set()    # keys currently being computed
         self._lock = threading.Lock()
+        self._trade_price_inflight = False
 
     # ---- windows / keys -------------------------------------------------
     def window_for(self, period=None, start=None, end=None):
@@ -217,6 +216,76 @@ class PeriodEngine:
         for p in (periods or WARM_PERIODS):
             self._request(self._key(p), p, None, None)
 
+    # ---- disclosure price estimates ------------------------------------
+    @staticmethod
+    def _price_pair(symbol, requested_date):
+        return f"{symbol}|{requested_date}"
+
+    def _read_trade_price(self, symbol, requested_date):
+        """Read a transaction-date estimate and the newest cached quote.
+
+        Disclosures do not contain execution prices.  We therefore use the
+        daily market close on the disclosed transaction date, or the next
+        trading session within seven days.  The newest 5-minute close is used
+        for the current comparison where available.
+        """
+        day = datetime.strptime(requested_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        historical = self.store.get_bars("1d", symbol, day.timestamp(),
+                                         (day + timedelta(days=7)).timestamp())
+        recent = self.store.get_bars("5m", symbol, (datetime.now(timezone.utc)-timedelta(days=10)).timestamp(),
+                                     time.time())
+        if recent.empty:
+            recent = self.store.get_bars("1d", symbol, (datetime.now(timezone.utc)-timedelta(days=14)).timestamp(),
+                                         time.time())
+        result = {"ticker": symbol, "requested_date": requested_date,
+                  "estimated_price": None, "price_date": None,
+                  "current_price": None, "current_asof": None, "pending": True}
+        if not historical.empty:
+            result["estimated_price"] = round(float(historical["close"].iloc[0]), 4)
+            result["price_date"] = historical.index[0].date().isoformat()
+        if not recent.empty:
+            result["current_price"] = round(float(recent["close"].iloc[-1]), 4)
+            result["current_asof"] = recent.index[-1].isoformat()
+        result["pending"] = result["estimated_price"] is None or result["current_price"] is None
+        return result
+
+    def _refresh_trade_prices(self, pairs):
+        try:
+            symbols = sorted({symbol for symbol, _ in pairs})
+            earliest = min(datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                           for _, d in pairs) - timedelta(days=2)
+            self._fill_gaps(symbols, "1d", "1d", earliest.timestamp(), time.time())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("trade-price backfill failed: %s", exc)
+        finally:
+            with self._lock:
+                self._trade_price_inflight = False
+
+    def trade_prices(self, pairs):
+        """Return cached estimates immediately and backfill missing daily bars.
+
+        `pairs` is an iterable of (ticker, ISO transaction date).  This method
+        never makes the HTTP request wait for Yahoo.
+        """
+        clean = []
+        for symbol, requested_date in pairs:
+            try:
+                datetime.strptime(requested_date, "%Y-%m-%d")
+            except (TypeError, ValueError):
+                continue
+            clean.append((symbol, requested_date))
+        clean = list(dict.fromkeys(clean))[:100]
+        results = {self._price_pair(s, d): self._read_trade_price(s, d) for s, d in clean}
+        needs = [(s, d) for s, d in clean if results[self._price_pair(s, d)]["pending"]]
+        if needs:
+            with self._lock:
+                start = not self._trade_price_inflight
+                if start:
+                    self._trade_price_inflight = True
+            if start:
+                threading.Thread(target=self._refresh_trade_prices, args=(needs,), daemon=True).start()
+        return {"prices": results, "pending": bool(needs)}
+
     # keep the old name as a blocking alias (used by nothing on the hot path now)
     def compute(self, period=None, start=None, end=None) -> dict:
         return self._compute(period=period, start=start, end=end)
@@ -272,25 +341,9 @@ class PeriodEngine:
                     st["maxpain_vs_last"] = h["vs_last"]
                     st["maxpain_vs_1d"] = h["vs_1d"]
                     st["maxpain_vs_1w"] = h["vs_1w"]
-        # attach cached fundamentals (company name + valuation) per stock
-        if self.fund_store is not None:
-            for st in stocks:
-                f = self.fund_store.get(st["ticker"])
-                if f:
-                    st["company"] = f.get("longName") or f.get("shortName")
-                    st["market_cap"] = f.get("marketCap")
-                    st["pe"] = f.get("trailingPE")
-                    st["forward_pe"] = f.get("forwardPE")
-                    st["eps"] = f.get("trailingEps")
-                    st["div_yield"] = f.get("dividendYield")
-                    st["w52_high"] = f.get("fiftyTwoWeekHigh")
-                    st["w52_low"] = f.get("fiftyTwoWeekLow")
-                    st["beta"] = f.get("beta")
-        # kick off gentle background refreshes for this sector's names
+        # kick off a gentle background refresh for this sector's names
         if self.mp_worker is not None:
             self.mp_worker.request([st["ticker"] for st in stocks])
-        if self.fund_worker is not None:
-            self.fund_worker.request([st["ticker"] for st in stocks])
         stocks.sort(key=lambda x: x["flow"], reverse=True)
         for i, st in enumerate(stocks):
             st["rank"] = i + 1

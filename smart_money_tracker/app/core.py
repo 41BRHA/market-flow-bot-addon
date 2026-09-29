@@ -100,6 +100,8 @@ class Store:
           checked TEXT, error TEXT, digest TEXT, parsed INTEGER DEFAULT 0, skipped INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT);''')
         self.db.commit()
+        with self.db:
+            self.db.execute('INSERT OR IGNORE INTO meta VALUES(?,?)',('score_started_at',json.dumps(utcnow())))
 
     def set_meta(self, key, value):
         with self.lock, self.db:
@@ -141,6 +143,14 @@ class Store:
             for r in rows: self._upsert(r)
 
     def search(self, ticker_value='', person='', action='', since='', limit=50, offset=0):
+        where,args=self._where(ticker_value,person,action,since)
+        clause=' AND '.join(where); limit=max(1,min(100,int(limit)));offset=max(0,min(100000,int(offset)))
+        with self.lock:
+            total=self.db.execute('SELECT count(*) FROM trades WHERE '+clause,args).fetchone()[0]
+            rows=self.db.execute('SELECT payload FROM trades WHERE '+clause+' ORDER BY disclosure_date DESC,transaction_date DESC,id LIMIT ? OFFSET ?',args+[limit,offset]).fetchall()
+        return dict(trades=[json.loads(r[0]) for r in rows],total=total,limit=limit,offset=offset)
+
+    def _where(self, ticker_value='', person='', action='', since=''):
         where=['1=1']; args=[]
         if ticker_value:
             sym=ticker(ticker_value)
@@ -152,11 +162,38 @@ class Store:
             if action not in ('Buy','Sell','Exchange','Other'): raise ValueError('Invalid action')
             where.append('action=?');args.append(action)
         if since: where.append('disclosure_date>=?');args.append(iso_date(since))
-        clause=' AND '.join(where); limit=max(1,min(100,int(limit)));offset=max(0,min(100000,int(offset)))
+        return where,args
+
+    def disclosures(self, ticker_value='', person='', action='', since='', limit=25, offset=0):
+        """One result row per politician and disclosure date, with its trades."""
+        where,args=self._where(ticker_value,person,action,since)
+        clause=' AND '.join(where);limit=max(1,min(50,int(limit)));offset=max(0,min(100000,int(offset)))
         with self.lock:
-            total=self.db.execute('SELECT count(*) FROM trades WHERE '+clause,args).fetchone()[0]
-            rows=self.db.execute('SELECT payload FROM trades WHERE '+clause+' ORDER BY disclosure_date DESC,transaction_date DESC,id LIMIT ? OFFSET ?',args+[limit,offset]).fetchall()
-        return dict(trades=[json.loads(r[0]) for r in rows],total=total,limit=limit,offset=offset)
+            total=self.db.execute('SELECT count(*) FROM (SELECT 1 FROM trades WHERE '+clause+' GROUP BY politician,disclosure_date)',args).fetchone()[0]
+            keys=self.db.execute('SELECT politician,disclosure_date FROM trades WHERE '+clause+' GROUP BY politician,disclosure_date ORDER BY disclosure_date DESC,politician LIMIT ? OFFSET ?',args+[limit,offset]).fetchall()
+            groups=[]
+            for politician,disclosure_date in keys:
+                group_where=where+['politician=?','disclosure_date=?']
+                group_args=args+[politician,disclosure_date]
+                rows=self.db.execute('SELECT payload FROM trades WHERE '+' AND '.join(group_where)+' ORDER BY transaction_date DESC,ticker,id',group_args).fetchall()
+                trades=[json.loads(r[0]) for r in rows]
+                groups.append(dict(politician=politician,disclosure_date=disclosure_date,
+                                   chamber=trades[0].get('chamber') if trades else '',trades=trades,
+                                   trade_count=len(trades)))
+        return dict(disclosures=groups,disclosures_total=total,limit=limit,offset=offset)
+
+    def people(self):
+        with self.lock:
+            rows=self.db.execute('SELECT politician,count(*) AS n,max(disclosure_date) AS latest FROM trades GROUP BY politician ORDER BY politician COLLATE NOCASE').fetchall()
+        return [dict(name=r[0],trade_count=r[1],latest_disclosure=r[2]) for r in rows]
+
+    def trades_for_people(self, names, limit=2000):
+        names=list(dict.fromkeys(str(n) for n in names if n))[:50]
+        if not names:return []
+        marks=','.join('?' for _ in names)
+        with self.lock:
+            rows=self.db.execute(f'SELECT payload FROM trades WHERE politician IN ({marks}) ORDER BY disclosure_date DESC,transaction_date DESC LIMIT ?',names+[max(1,min(5000,int(limit)))]).fetchall()
+        return [json.loads(r[0]) for r in rows]
 
     def status(self):
         with self.lock:
@@ -165,7 +202,7 @@ class Store:
             problems=[dict(r) for r in self.db.execute("SELECT id,state,error,skipped FROM reports WHERE state IN ('partial','error','unparsed') LIMIT 20")]
         return dict(house_reports=counts,trade_count=total,problems=problems,
                     house=self.get_meta('house',{}),senate=self.get_meta('senate',{'state':'not_configured'}),
-                    running=self.get_meta('running',False),coverage='partial',
+                    running=self.get_meta('running',False),coverage='partial',score_started_at=self.get_meta('score_started_at'),
                     note='House PTRs only within the configured disclosure window; unmatched, scanned and amended filings may be incomplete. Senate coverage is separate. Disclosed ranges are not exact trade values.')
 
 

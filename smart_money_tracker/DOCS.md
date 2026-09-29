@@ -1,10 +1,10 @@
-# Market Flow + Politician Trades — first working build
+# Market Flow + Politician Trades — linked build
 
 This bundle contains:
 
-- **Market Flow Bot 0.15.4**: your v0.15.3 plus a politician-disclosure panel in each stock's detail view.
-- **Smart Money Tracker 0.1.0**: a separate Home Assistant add-on with its own database and dashboard.
-- **REVIEW-v0.15.3.md**: what Claude fixed, what remains, and reproducible examples.
+- **Market Flow Bot 0.16.0**: market flow, company valuation and the linked politician-disclosure panel in each stock detail view.
+- **Smart Money Tracker 0.2.0**: a linked Home Assistant add-on with its own disclosure database and dashboard.
+- **REVIEW-v0.16.0.md**: the implementation, score formula, corrections, limits and Claude review handover.
 - **tests/**: automated checks and two official public PDF fixtures.
 
 ## Install locally in Home Assistant
@@ -17,6 +17,10 @@ This bundle contains:
 
    `smart_money_url: "http://local-smart-money-tracker:8098"`
 
+   Smart Money defaults to the reverse link:
+
+   `market_flow_url: "http://local-market-flow-bot:8099"`
+
    This is the internal DNS name for a locally installed add-on. If installed from a repository rather than Local add-ons, substitute that installation's actual hostname. Do not use a Nabu Casa or ingress browser URL here.
 6. Open **Politician Trades**. Collection starts automatically. Then open Market Flow, enter a sector, select a stock, and scroll its details to **Politician trades**.
 
@@ -28,11 +32,13 @@ No external port mapping is required. Access the dashboards through Home Assista
 - Default disclosure lookback of 365 days; newest reports processed first in small batches. The first backfill may take hours, depending on the backlog and PDF sizes.
 - Conservative PDF parsing using transaction-column geometry. Explicit tickers only: company names are never guessed.
 - Per-stock purchases, sales, exchanges, reported amount ranges, owner, transaction date, filing date, disclosure delay and original filing link.
-- A separate searchable dashboard: ticker, politician, action, disclosure date filter and pagination.
+- A grouped searchable dashboard: ticker, politician selector, action and disclosure date filters. One politician/disclosure row expands to all its trades.
 - Persistent SQLite storage, repeat-download/import deduplication, transactional report replacement, retryable errors and visible incomplete reports.
 - Existing cached records remain available if a source is down. Check the last source check and source status before treating coverage as current.
 - CSV import for additional House/Senate records. The dashboard provides the template. Dates are YYYY-MM-DD. Quote values containing commas. The entire file is validated before anything is saved.
-- A read-only Market Flow bridge. It caches results for 60 seconds, has a four-second timeout and displays unavailable/partial states. It makes no Yahoo or other price requests.
+- A two-way internal link: Market Flow displays grouped disclosures; Smart Money reads cached historical/latest prices from Market Flow. Smart Money runs no second Yahoo downloader.
+- Estimated trade-date close, latest price, direction-adjusted performance and a transparent politician Trade Score.
+- Full company name, market cap, P/E, price/book, margin, growth and 52-week range in Market Flow's left stock panel.
 
 ## Senate connection
 
@@ -52,6 +58,7 @@ CSV import works without that service. Imported records stay labelled `csv_impor
 | reports_per_cycle | 30 | House PDF batch size; backlog resumes after a short pause |
 | fmp_api_key | blank | Optional Senate provider credential |
 | senate_pages | 5 | Bounded latest-page Senate collection |
+| market_flow_url | http://local-market-flow-bot:8099 | Internal price-cache link to Market Flow |
 
 Manual source checks are limited to once per minute. Failed/partial House reports retry after one day; fully parsed reports are rechecked after seven days as the backlog allows. A restart resumes the same database. Data is in the new add-on's `/data/disclosures.db`, independent of Market Flow's databases.
 
@@ -61,7 +68,7 @@ Manual source checks are limited to once per minute. Failed/partial House report
 - Amounts are ranges, not exact executed values. No range midpoint is presented as fact.
 - Transactions can belong to a spouse, joint account or dependent; blank ownership is shown as **Not stated**.
 - Stock, option and other asset types remain visible. A ticker match for an option does not mean an outright share purchase.
-- No current portfolio, position size, profit or trading-performance claim is inferred from these reports.
+- No current portfolio or exact profit is inferred. The displayed result uses an estimated market close, and the score is a dataset tracking statistic rather than proof of skill.
 - No matching record means none in the collected dataset. It does not establish absence of trading.
 - Filings with no explicit ticker, scanned pages and unsupported layouts are incomplete. Parsing is not OCR. Some legitimate non-listed investments therefore appear in the report-review count.
 - Amendments are flagged when detectable, but are not reconciled with original disclosures. Check the source PDF.
@@ -70,9 +77,9 @@ Manual source checks are limited to once per minute. Failed/partial House report
 
 ## Review and validation
 
-Read REVIEW-v0.15.3.md before relying on existing market-flow alerts. Some prior issues remain; this release adds the disclosure integration without silently changing the trading calculations.
+Read REVIEW-v0.16.0.md for the score formula, price architecture, calculation corrections and remaining limits.
 
-21 Python tests pass, including two official PDF fixtures and an HTTP bridge test. Six recent official PDFs were exercised, yielding 83 ticker-linked records; this is a small parsing sample, not proof of complete coverage. Both dashboard scripts pass JavaScript syntax checks. DOM interaction tests verified dashboard search, the stock disclosure panel, source links and ticker switching without script errors. Browser visual validation could not run because the browser binary download failed in the build environment. A Home Assistant/Docker deployment and authenticated Senate fetch still need testing on your installation.
+29 Python tests pass, including two official PDF fixtures and regression tests for grouping, pricing, scoring and market calculations. Six recent official PDFs were exercised, yielding 83 ticker-linked records; this is a small parsing sample, not proof of complete coverage. Both dashboard scripts pass JavaScript syntax checks. DOM interaction tests verified grouped disclosure expansion, selector filtering, prices, scores, company valuation, source links and ticker switching without script errors. Browser visual validation could not run because the browser binary download failed in the build environment. A Home Assistant/Docker deployment and authenticated Senate fetch still need testing on your installation.
 
 Run tests from this bundle's root with Python 3.12 and the application dependencies installed:
 

@@ -1,5 +1,5 @@
 name: Smart Money Tracker
-version: "0.1.0"
+version: "0.2.0"
 slug: smart_money_tracker
 description: Politician disclosures with official House reports, optional Senate feed, and Market Flow integration.
 arch: [amd64, aarch64]
@@ -17,6 +17,7 @@ options:
   reports_per_cycle: 30
   fmp_api_key: ""
   senate_pages: 5
+  market_flow_url: "http://local-market-flow-bot:8099"
 schema:
   house_enabled: bool
   lookback_days: int(7,1825)
@@ -24,3 +25,4 @@ schema:
   reports_per_cycle: int(1,100)
   fmp_api_key: password?
   senate_pages: int(1,20)
+  market_flow_url: str?

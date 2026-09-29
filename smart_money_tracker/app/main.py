@@ -5,10 +5,11 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 from .core import Store,import_csv
+from .prices import PriceBridge,politician_score
 from .sync import Collector
 
 
-def make_handler(store,collector):
+def make_handler(store,collector,prices=None):
     class Handler(BaseHTTPRequestHandler):
         def send(self,code,obj,ctype='application/json'):
             body=obj if isinstance(obj,bytes) else json.dumps(obj,allow_nan=False).encode()
@@ -22,8 +23,23 @@ def make_handler(store,collector):
             p=urlparse(self.path);q={k:v[0] for k,v in parse_qs(p.query).items()}
             try:
                 if p.path=='/api/status': return self.send(200,store.status())
+                if p.path=='/api/people': return self.send(200,{'people':store.people()})
                 if p.path=='/api/trades':
                     result=store.search(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),q.get('limit',50),q.get('offset',0))
+                    if prices is not None:
+                        result['trades']=prices.enrich(result['trades'])
+                    if q.get('grouped') in ('1','true','yes'):
+                        grouped=store.disclosures(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),q.get('limit',25),q.get('offset',0))
+                        people=[g['politician'] for g in grouped['disclosures']]
+                        history=store.trades_for_people(people)
+                        enriched=prices.enrich(history) if prices is not None else history
+                        by_id={t.get('id'):t for t in enriched}
+                        by_person={}
+                        for trade in enriched:by_person.setdefault(trade.get('politician',''),[]).append(trade)
+                        for group in grouped['disclosures']:
+                            group['trades']=[by_id.get(t.get('id'),t) for t in group['trades']]
+                            group['score']=politician_score(by_person.get(group['politician'],[]))
+                        result.update(grouped)
                     result['status']=store.status();return self.send(200,result)
                 if p.path=='/api/template.csv':
                     return self.send(200,b'ticker,politician,chamber,action,transaction_date,disclosure_date,amount,source_url,owner,asset,asset_type,notes\n','text/csv')
@@ -62,6 +78,7 @@ def run():
     options_path=base/'options.json'
     options=json.loads(options_path.read_text()) if options_path.exists() else {}
     store=Store(str(base/'disclosures.db'));collector=Collector(store,options);collector.start()
-    ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector)).serve_forever()
+    prices=PriceBridge(options.get('market_flow_url','http://local-market-flow-bot:8099'))
+    ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices)).serve_forever()
 
 if __name__=='__main__': run()

@@ -47,13 +47,21 @@ def max_pain_from_chain(call_oi: list[tuple[float, float]],
                         put_oi: list[tuple[float, float]]) -> float | None:
     """call_oi/put_oi: lists of (strike, open_interest). Returns the max-pain
     strike (the strike minimising total ITM option value at expiry)."""
+    def clean(rows):
+        out=[]
+        for k,oi in rows:
+            try:k=float(k)
+            except (TypeError,ValueError):continue
+            if math.isfinite(k):out.append((k,_oi(oi)))
+        return out
+    call_oi=clean(call_oi);put_oi=clean(put_oi)
+    call_oi = [(k, max(0.0, oi)) for k, oi in call_oi]
+    put_oi = [(k, max(0.0, oi)) for k, oi in put_oi]
     strikes = sorted({k for k, _ in call_oi} | {k for k, _ in put_oi})
     if not strikes:
         return None
-    # coerce any NaN/inf open interest to 0 up front — a single NaN in the sum
-    # makes every `total < best_val` comparison False and freezes the search.
-    call_oi = [(k, oi if math.isfinite(oi) else 0.0) for k, oi in call_oi]
-    put_oi = [(k, oi if math.isfinite(oi) else 0.0) for k, oi in put_oi]
+    if sum(oi for _,oi in call_oi)+sum(oi for _,oi in put_oi)<=0:
+        return None
     best_strike, best_val = None, None
     for s in strikes:
         total = 0.0
@@ -76,20 +84,20 @@ class MaxPainStore:
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA journal_mode=WAL")
-        self._lock = threading.RLock()   # the worker writes while requests read — serialise
         self.conn.execute("""CREATE TABLE IF NOT EXISTS maxpain(
             ticker TEXT, expiry TEXT, ts REAL, max_pain REAL, spot REAL)""")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_mp ON maxpain(ticker, ts)")
         self.conn.commit()
+        self.lock = threading.RLock()
 
     def record(self, ticker, expiry, ts, max_pain, spot):
-        with self._lock:
+        with self.lock:
             self.conn.execute("INSERT INTO maxpain VALUES(?,?,?,?,?)",
                               (ticker, expiry, ts, max_pain, spot))
             self.conn.commit()
 
     def _rows(self, ticker, limit=400):
-        with self._lock:
+        with self.lock:
             cur = self.conn.execute(
                 "SELECT ts, expiry, max_pain, spot FROM maxpain WHERE ticker=? ORDER BY ts DESC LIMIT ?",
                 (ticker, limit))

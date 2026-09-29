@@ -9,6 +9,7 @@ the batch.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 import pandas as pd
@@ -26,6 +27,10 @@ class YahooProvider:
 
     def __init__(self):
         self._tz_set = False
+        # Period tabs, disclosure price estimates and the live loop can all
+        # request data. yfinance has process-global caches, so serialise the
+        # actual downloads while leaving DB reads and calculations concurrent.
+        self._download_lock = threading.Lock()
 
     def _ensure_tz(self, yf):
         if self._tz_set:
@@ -40,11 +45,12 @@ class YahooProvider:
         """Download one batch with backoff on rate-limit. Returns raw yf frame or None."""
         for attempt in range(MAX_RETRIES):
             try:
-                data = yf.download(
-                    tickers=batch, period=lookback, interval=interval,
-                    group_by="ticker", prepost=True, auto_adjust=False,
-                    threads=True, progress=False,
-                )
+                with self._download_lock:
+                    data = yf.download(
+                        tickers=batch, period=lookback, interval=interval,
+                        group_by="ticker", prepost=True, auto_adjust=False,
+                        threads=True, progress=False,
+                    )
                 return data
             except Exception as exc:  # noqa: BLE001
                 msg = str(exc).lower()
@@ -122,9 +128,10 @@ class YahooProvider:
         for bi, batch in enumerate(batches):
             for attempt in range(MAX_RETRIES):
                 try:
-                    data = yf.download(tickers=batch, start=start, end=end, interval=interval,
-                                       group_by="ticker", prepost=True, auto_adjust=False,
-                                       threads=True, progress=False)
+                    with self._download_lock:
+                        data = yf.download(tickers=batch, start=start, end=end, interval=interval,
+                                           group_by="ticker", prepost=True, auto_adjust=False,
+                                           threads=True, progress=False)
                     self._extract(data, batch, out)
                     break
                 except Exception as exc:  # noqa: BLE001

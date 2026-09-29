@@ -1,3 +1,12 @@
+# 0.2.0
+
+- One expandable dashboard row per politician and disclosure date.
+- Politician selector populated from collected names.
+- Estimated transaction-date close, latest Market Flow price and direction-adjusted return.
+- Transparent 0-100 Trade Score with win rate, average return and sample size.
+- Prices are read from Market Flow's cache through the internal add-on link; Smart Money does not run a second Yahoo downloader.
+- Existing flat `/api/trades` response remains available for compatibility; grouped results are opt-in with `grouped=1`.
+
 # 0.1.0
 
 - Official House index and PDF collector with bounded work, persistent retries and explicit coverage gaps.

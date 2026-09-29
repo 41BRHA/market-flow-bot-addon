@@ -100,15 +100,6 @@ def refresh():
             continue
         seen.add(k)
         evs.append(e)
-    # carry over any 'actual' already filled for the same event so a refresh
-    # doesn't wipe released figures (they'd only be re-filled on the next enrich).
-    old = {(e.get("title"), e.get("datetime_utc")): e for e in load().get("events", [])}
-    for e in evs:
-        if not e.get("actual"):
-            prev = old.get((e.get("title"), e.get("datetime_utc")))
-            if prev and prev.get("actual"):
-                e["actual"] = prev["actual"]
-                e["actual_at"] = prev.get("actual_at")
     evs.sort(key=lambda e: e["datetime_utc"] or "")
     payload = {"events": evs, "updated": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     try:

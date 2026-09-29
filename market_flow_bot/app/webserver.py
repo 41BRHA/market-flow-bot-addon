@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import threading
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -25,6 +26,7 @@ _LATEST_PATH = ("/data/latest.json" if os.path.isdir("/data")
 
 _SMART_URL = ""
 _ENGINE = None   # PeriodEngine, set by start()
+_FUNDAMENTALS = None
 
 
 def _parse_range(frm: str, to: str):
@@ -32,18 +34,26 @@ def _parse_range(frm: str, to: str):
     INCLUSIVE: a bare 'to' date covers that whole day, so from==to returns the
     full day instead of a zero-length window."""
     from datetime import datetime, timedelta, timezone
-    start = datetime.fromisoformat(frm).replace(tzinfo=timezone.utc)
-    end = datetime.fromisoformat(to).replace(tzinfo=timezone.utc)
+    start = datetime.fromisoformat(frm)
+    end = datetime.fromisoformat(to)
+    start = start.replace(tzinfo=timezone.utc) if start.tzinfo is None else start.astimezone(timezone.utc)
+    end = end.replace(tzinfo=timezone.utc) if end.tzinfo is None else end.astimezone(timezone.utc)
     if len(to) <= 10:          # bare date (YYYY-MM-DD) -> include the end day
         end = end + timedelta(days=1)
+    if end <= start:
+        raise ValueError("end must be after start")
     return start.timestamp(), end.timestamp()
 
 
 def write_latest(payload: dict) -> None:
     """Called by the main loop each cycle to publish the current snapshot."""
     try:
-        with open(_LATEST_PATH, "w", encoding="utf-8") as fh:
+        tmp = _LATEST_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, _LATEST_PATH)
     except Exception as exc:  # noqa: BLE001
         log.warning("could not write latest.json: %s", exc)
 
@@ -64,6 +74,24 @@ class _Handler(BaseHTTPRequestHandler):
             from .politicians import get_trades
             ticker = (parse_qs(parsed.query).get("ticker") or [""])[0]
             return self._send(200, json.dumps(get_trades(_SMART_URL, ticker)).encode(), "application/json")
+        if path == "/api/trade-prices":
+            if _ENGINE is None:
+                return self._send(200, b'{"error":"engine not ready","prices":{}}', "application/json")
+            raw_pairs = parse_qs(parsed.query).get("pair") or []
+            pairs = []
+            for raw in raw_pairs[:100]:
+                try:
+                    symbol, day = raw.split("|", 1)
+                except ValueError:
+                    continue
+                symbol = symbol.strip().upper().replace(".", "-")
+                if re.fullmatch(r"[A-Z][A-Z0-9-]{0,14}", symbol) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                    pairs.append((symbol, day))
+            return self._send(200, json.dumps(_ENGINE.trade_prices(pairs)).encode(), "application/json")
+        if path == "/api/fundamentals":
+            ticker = (parse_qs(parsed.query).get("ticker") or [""])[0]
+            result = _FUNDAMENTALS.get(ticker) if _FUNDAMENTALS is not None else {"ticker": ticker, "pending": True}
+            return self._send(200, json.dumps(result).encode(), "application/json")
         if path == "/api/events":
             from . import events as _ev
             if (parse_qs(parsed.query).get("refresh") or [None])[0]:
@@ -141,9 +169,11 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def start(port: int = 8099, engine=None, smart_money_url="") -> None:
-    global _ENGINE, _SMART_URL
+    global _ENGINE, _SMART_URL, _FUNDAMENTALS
     _ENGINE = engine
     _SMART_URL = smart_money_url
+    from .fundamentals import FundamentalsService
+    _FUNDAMENTALS = FundamentalsService()
 
     def _run():
         try:

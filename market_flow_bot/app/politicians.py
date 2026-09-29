@@ -18,8 +18,9 @@ def get_trades(base_url,ticker):
     key=(base_url,ticker)
     with _lock:
         cached=_cache.get(key)
-        if cached and time.monotonic()-cached[0]<60: return cached[1]
-    url=base_url.rstrip('/')+'/api/trades?'+urllib.parse.urlencode({'ticker':ticker,'limit':20})
+        pending=cached and any(t.get('price_pending') for t in cached[1].get('trades',[]))
+        if cached and time.monotonic()-cached[0]<(5 if pending else 60): return cached[1]
+    url=base_url.rstrip('/')+'/api/trades?'+urllib.parse.urlencode({'ticker':ticker,'limit':20,'grouped':'1'})
     try:
         with urllib.request.urlopen(url,timeout=4) as r:
             raw=r.read(1_000_001)
