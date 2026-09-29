@@ -110,11 +110,15 @@ def _stock_flow(df: pd.DataFrame, recent_bars: int | None, mult: float = 1.0) ->
     for i in range(len(closes)):
         c, v = closes[i], vols[i]
         dv = c * v * mult
-        if not np.isfinite(dv):
+        if not np.isfinite(dv) or v < 0:      # bad tick / negative volume -> skip
             prev = c if np.isfinite(c) else prev
             continue
         if highs is not None and np.isfinite(highs[i]) and np.isfinite(lows[i]) and highs[i] > lows[i]:
             mfm = ((c - lows[i]) - (highs[i] - c)) / (highs[i] - lows[i])   # Chaikin, [-1,1]
+            # a bad tick (close printed outside the bar's high/low) can push this
+            # past ±1; clamp so the ratio invariant [-1,1] always holds.
+            if mfm > 1.0: mfm = 1.0
+            elif mfm < -1.0: mfm = -1.0
         else:
             if prev is None:
                 prev = c
@@ -146,20 +150,26 @@ def pct_changes(frames, mode: str = "prev_close") -> dict[str, float]:
         except Exception:  # noqa: BLE001
             continue
         dates = np.array([t.date() for t in et])
+        mins = np.array([t.hour * 60 + t.minute for t in et])
+        regular = (mins >= 570) & (mins <= 960)          # 09:30–16:00 ET regular session
         today = dates[-1]
         last = closes[-1]
         if not np.isfinite(last):
             continue
         if mode == "session_open":
-            mask = dates == today
-            if not mask.any():
+            reg_today = np.where((dates == today) & regular)[0]
+            any_today = np.where(dates == today)[0]
+            idxs = reg_today if reg_today.size else any_today   # true open, else first (pre-market) bar
+            if idxs.size == 0:
                 continue
-            ref = closes[int(np.argmax(mask))]           # first bar of today
-        else:  # prev_close
-            prev = np.where(dates < today)[0]
-            if prev.size == 0:
+            ref = closes[int(idxs[0])]
+        else:  # prev_close -> the last REGULAR-session close before today (not after-hours)
+            reg_prev = np.where((dates < today) & regular)[0]
+            any_prev = np.where(dates < today)[0]
+            idxs = reg_prev if reg_prev.size else any_prev
+            if idxs.size == 0:
                 continue
-            ref = closes[int(prev[-1])]                  # last close before today
+            ref = closes[int(idxs[-1])]
         if np.isfinite(ref) and ref != 0:
             out[sym] = (last / ref - 1.0) * 100.0
     return out

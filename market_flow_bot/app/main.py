@@ -11,6 +11,7 @@ from .history import History
 from .barstore import BarStore
 from .period import PeriodEngine
 from .maxpain import MaxPainStore, MaxPainWorker
+from .fundamentals import FundamentalsStore, FundamentalsWorker
 from .notify import Notifier
 from .providers import make_provider
 from .signals import compute, pct_changes
@@ -67,14 +68,17 @@ def run() -> None:
         df = bars.get_bars("5m", sym, _t.time() - 7200, _t.time())
         return float(df["close"].iloc[-1]) if not df.empty else None
     mp_worker = MaxPainWorker(mp_store, spot_fn=_spot)
+    fund_store = FundamentalsStore()
+    fund_worker = FundamentalsWorker(fund_store)
     last_prune = 0.0
 
     sectors, symbols = _resolve(cfg)
     last_resolve = time.time()
     # Period backend: serves any window on demand, cache-first via the bar-store.
     engine = PeriodEngine(lambda: sectors, cfg.benchmark, provider, bars,
-                          mp_store=mp_store, mp_worker=mp_worker)
-    webserver.start(cfg.ingress_port, engine=engine)
+                          mp_store=mp_store, mp_worker=mp_worker,
+                          fund_store=fund_store, fund_worker=fund_worker)
+    webserver.start(cfg.ingress_port, engine=engine, smart_money_url=cfg.smart_money_url)
     engine.warm()   # pre-compute common windows (1d/3d/6h/3h/1h) in the background
     total = sum(len(s.symbols) for s in sectors)
     log.info("Up. source=%s sectors=%d constituents=%d symbols=%d poll=%ss benchmark=%s",
@@ -162,6 +166,10 @@ def run() -> None:
             if first_cycle:
                 log.info("first cycle — baselines set, alerts start next cycle")
                 first_cycle = False
+            elif stale:
+                # data is stale (a delayed/failed fetch) — don't fire ANY alerts
+                # off it; wait for a fresh cycle. (Previously only move alerts checked this.)
+                log.info("data stale (%s min) — holding alerts this cycle", data_age_min)
             else:
                 for sig in signals:
                     cd = summary_cd if sig.key == "flow_summary" else cooldown

@@ -90,6 +90,7 @@ class Config:
     auto_constituents: bool = True
     top_n: int = 30
     history_days: int = 180
+    smart_money_url: str = "http://local-smart-money-tracker:8098"
     ingress_port: int = 8099
     notify: NotifyCfg = field(default_factory=NotifyCfg)
     webull: WebullCfg = field(default_factory=WebullCfg)
@@ -117,6 +118,7 @@ class Config:
             top_n=int(raw.get("top_n", 30)),
             history_days=int(raw.get("history_days", 180)),
             ingress_port=int(raw.get("ingress_port", 8099)),
+            smart_money_url=str(raw.get("smart_money_url", "http://local-smart-money-tracker:8098")),
             notify=NotifyCfg(**{k: nt[k] for k in nt if k in NotifyCfg.__annotations__}),
             webull=WebullCfg(**{k: wb[k] for k in wb if k in WebullCfg.__annotations__}),
         )

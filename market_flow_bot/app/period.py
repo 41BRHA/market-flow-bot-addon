@@ -66,13 +66,15 @@ def _merge(intervals):
 
 class PeriodEngine:
     def __init__(self, get_sectors, benchmark, provider, store: barstore.BarStore,
-                 mp_store=None, mp_worker=None):
+                 mp_store=None, mp_worker=None, fund_store=None, fund_worker=None):
         self.get_sectors = get_sectors      # callable -> current resolved sectors
         self.benchmark = benchmark
         self.provider = provider
         self.store = store
         self.mp_store = mp_store            # MaxPainStore (optional)
         self.mp_worker = mp_worker          # MaxPainWorker (optional)
+        self.fund_store = fund_store        # FundamentalsStore (optional)
+        self.fund_worker = fund_worker      # FundamentalsWorker (optional)
         # snapshot cache
         self._cache: dict[str, dict] = {}   # key -> {"snap": dict, "ts": float}
         self._inflight: set[str] = set()    # keys currently being computed
@@ -270,9 +272,25 @@ class PeriodEngine:
                     st["maxpain_vs_last"] = h["vs_last"]
                     st["maxpain_vs_1d"] = h["vs_1d"]
                     st["maxpain_vs_1w"] = h["vs_1w"]
-        # kick off a gentle background refresh for this sector's names
+        # attach cached fundamentals (company name + valuation) per stock
+        if self.fund_store is not None:
+            for st in stocks:
+                f = self.fund_store.get(st["ticker"])
+                if f:
+                    st["company"] = f.get("longName") or f.get("shortName")
+                    st["market_cap"] = f.get("marketCap")
+                    st["pe"] = f.get("trailingPE")
+                    st["forward_pe"] = f.get("forwardPE")
+                    st["eps"] = f.get("trailingEps")
+                    st["div_yield"] = f.get("dividendYield")
+                    st["w52_high"] = f.get("fiftyTwoWeekHigh")
+                    st["w52_low"] = f.get("fiftyTwoWeekLow")
+                    st["beta"] = f.get("beta")
+        # kick off gentle background refreshes for this sector's names
         if self.mp_worker is not None:
             self.mp_worker.request([st["ticker"] for st in stocks])
+        if self.fund_worker is not None:
+            self.fund_worker.request([st["ticker"] for st in stocks])
         stocks.sort(key=lambda x: x["flow"], reverse=True)
         for i, st in enumerate(stocks):
             st["rank"] = i + 1

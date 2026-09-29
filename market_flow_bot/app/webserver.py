@@ -23,6 +23,7 @@ _HTML_PATH = os.path.join(os.path.dirname(__file__), "flow_map.html")
 _LATEST_PATH = ("/data/latest.json" if os.path.isdir("/data")
                 else os.path.join(os.path.dirname(__file__), "latest.json"))
 
+_SMART_URL = ""
 _ENGINE = None   # PeriodEngine, set by start()
 
 
@@ -59,6 +60,10 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+        if path == "/api/politician-trades":
+            from .politicians import get_trades
+            ticker = (parse_qs(parsed.query).get("ticker") or [""])[0]
+            return self._send(200, json.dumps(get_trades(_SMART_URL, ticker)).encode(), "application/json")
         if path == "/api/events":
             from . import events as _ev
             if (parse_qs(parsed.query).get("refresh") or [None])[0]:
@@ -135,9 +140,10 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-def start(port: int = 8099, engine=None) -> None:
-    global _ENGINE
+def start(port: int = 8099, engine=None, smart_money_url="") -> None:
+    global _ENGINE, _SMART_URL
     _ENGINE = engine
+    _SMART_URL = smart_money_url
 
     def _run():
         try:

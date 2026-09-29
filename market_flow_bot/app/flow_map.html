@@ -78,7 +78,7 @@
   /* ---- sector drill-down: three-panel (detail | radial | list) ---- */
   .sectorwrap{display:none; gap:14px; align-items:flex-start; margin-top:8px}
   .sectorwrap.on{display:flex}
-  .sec-detail{flex:0 0 280px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px 16px 14px}
+  .sec-detail{max-height:84vh;overflow-y:auto;flex:0 0 280px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px 16px 14px}
   .sec-mid{flex:1 1 auto; min-width:0; display:flex; justify-content:center}
   .sec-map{width:100%; max-width:88vh; aspect-ratio:1/1}
   .sec-list{flex:0 0 232px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:8px 8px 10px; align-self:stretch; max-height:84vh; overflow:auto}
@@ -88,6 +88,7 @@
   .sd-tkr span{font-size:15px; font-weight:600; color:var(--muted); margin-left:8px}
   .sd-name{font-size:12px; color:var(--muted); margin:3px 0 12px}
   .sd-name b{font-weight:800}
+  .sd-company{font-size:13px; font-weight:600; color:var(--ink); margin:2px 0 8px; line-height:1.25}
   .sd-pin{background:rgba(217,164,65,.10); border:1px solid rgba(217,164,65,.35);
     border-radius:12px; padding:12px 10px; text-align:center; margin-bottom:12px}
   .sd-pin .k{font-size:10px; letter-spacing:1px; color:var(--muted); text-transform:uppercase; font-weight:700}
@@ -466,7 +467,8 @@ async function openSector(name, key){
     }
     SECTOR_DATA=j.stocks.map(x=>({name:x.ticker, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1),
       last:x.last, mp:x.maxpain, mpSpot:x.maxpain_spot, mpExp:x.maxpain_expiry, mpAt:x.maxpain_at,
-      vsLast:x.maxpain_vs_last, vs1d:x.maxpain_vs_1d, vs1w:x.maxpain_vs_1w}));
+      vsLast:x.maxpain_vs_last, vs1d:x.maxpain_vs_1d, vs1w:x.maxpain_vs_1w,
+      company:x.company, mcap:x.market_cap, pe:x.pe, fpe:x.forward_pe, eps:x.eps, dy:x.div_yield, w52h:x.w52_high, w52l:x.w52_low, beta:x.beta}));
     SECTOR_UPDATED=j.updated||null;
     // keep the current selection if it still exists, else pick the strongest-flow name
     const top=[...SECTOR_DATA].sort((a,b)=>b.flow-a.flow)[0];
@@ -500,6 +502,8 @@ function selectStock(t){ SECTOR_SEL=t; renderSector(); }
 
 function renderSector(){ renderSecDetail(); renderSecRadial(); renderSecList(); }
 
+const POLITICIAN_CACHE = new Map();
+
 function renderSecDetail(){
   const box=document.getElementById('secDetail');
   const s=SECTOR_DATA.find(x=>x.name===SECTOR_SEL);
@@ -522,9 +526,26 @@ function renderSecDetail(){
     return `<div class="sd-hist"><span class="k">${label}</span><span class="v ${cls}">${arw} ${val}</span></div>`;
   };
   const calc = s.mpAt? new Date(s.mpAt) : null;
+  // valuation formatters
+  const fnum=v=>(v==null||isNaN(v))?'—':(Math.abs(+v)>=100?(+v).toFixed(0):(+v).toFixed(2));
+  const fmc=v=>{ if(v==null||isNaN(v))return '—'; const a=Math.abs(+v),sg=v<0?'-':''; if(a>=1e12)return sg+'$'+(a/1e12).toFixed(2)+'T'; if(a>=1e9)return sg+'$'+(a/1e9).toFixed(2)+'B'; if(a>=1e6)return sg+'$'+(a/1e6).toFixed(0)+'M'; return sg+'$'+a.toFixed(0); };
+  const fdy=v=>{ if(v==null||isNaN(v))return '—'; const p=(+v>1?+v:+v*100); return p.toFixed(2)+'%'; };
+  const hasFund = s.company||s.mcap!=null||s.pe!=null||s.beta!=null;
+  const valuation = hasFund
+    ? `<div class="sd-hist-h">Valuation</div>`
+      +`<div class="sd-row"><span class="k">Market cap</span><span class="v">${fmc(s.mcap)}</span></div>`
+      +`<div class="sd-row"><span class="k">P/E (ttm)</span><span class="v">${fnum(s.pe)}</span></div>`
+      +`<div class="sd-row"><span class="k">Forward P/E</span><span class="v">${fnum(s.fpe)}</span></div>`
+      +`<div class="sd-row"><span class="k">EPS (ttm)</span><span class="v">${s.eps!=null?'$'+fnum(s.eps):'—'}</span></div>`
+      +`<div class="sd-row"><span class="k">Div yield</span><span class="v">${fdy(s.dy)}</span></div>`
+      +`<div class="sd-row"><span class="k">52-wk range</span><span class="v">${(s.w52l!=null&&s.w52h!=null)?('$'+fnum(s.w52l)+' – $'+fnum(s.w52h)):'—'}</span></div>`
+      +`<div class="sd-row"><span class="k">Beta</span><span class="v">${fnum(s.beta)}</span></div>`
+    : `<div class="sd-hist-h">Valuation</div><div class="sd-foot">Fetching fundamentals… (fills in within a minute or two)</div>`;
   box.innerHTML =
     `<div class="sd-tkr">${escHtml(s.name)} <span>${spot}</span></div>`+
+    (s.company?`<div class="sd-company">${escHtml(s.company)}</div>`:'')+
     `<div class="sd-name">Flow (${SECTOR_KEY}) <b class="${s.flow>=0?'up':'down'}">${flowStr}</b> · net ${fmtCash(s.cash)}</div>`+
+    valuation+
     (hasPin
       ? `<div class="sd-pin"><div class="k">Max pain${s.mpExp?(' · '+s.mpExp):''}</div><div class="v">$${s.mp}</div></div>`
       : `<div class="sd-pin"><div class="k">Max pain</div><div class="v" style="font-size:15px;color:var(--muted);font-weight:600">computing…</div></div>`)+
@@ -534,7 +555,29 @@ function renderSecDetail(){
     (note?`<div class="sd-note">${note}</div>`:'')+
     `<div class="sd-hist-h">Max-pain history</div>`+
     hist('vs last calc', s.vsLast)+hist('vs 1 day ago', s.vs1d)+hist('vs 1 week ago', s.vs1w)+
-    (calc?`<div class="sd-foot">calculated ${String(calc.getHours()).padStart(2,'0')}:${String(calc.getMinutes()).padStart(2,'0')} · held until next refresh</div>`:'');
+    (calc?`<div class="sd-foot">calculated ${String(calc.getHours()).padStart(2,'0')}:${String(calc.getMinutes()).padStart(2,'0')} · held until next refresh</div>`:'') + `<div id="politicianTrades" style="border-top:1px solid var(--line);margin-top:18px;padding-top:14px"><b>Politician trades</b><div class="sd-foot">Loading disclosures…</div></div>`;
+  loadPoliticianTrades(s.name);
+}
+
+
+async function loadPoliticianTrades(ticker){
+  let entry=POLITICIAN_CACHE.get(ticker);
+  if(!entry || Date.now()-entry.time>60000){
+    const promise=fetch('api/politician-trades?ticker='+encodeURIComponent(ticker),{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('Unavailable');return r.json()}).catch(()=>({available:false,error:'Tracker unavailable',trades:[]}));
+    entry={time:Date.now(),promise}; POLITICIAN_CACHE.set(ticker,entry);
+  }
+  const j=await entry.promise;
+  if(VIEW!=='sector'||SECTOR_SEL!==ticker)return;
+  const box=document.getElementById('politicianTrades'); if(!box)return;
+  const heading='<b>Politician trades</b>';
+  if(!j.available){box.innerHTML=heading+'<div class="sd-note">'+escHtml(j.error||'Data unavailable')+'</div>';return;}
+  const status=j.status||{},h=status.house||{},sen=status.senate||{},counts=status.house_reports||{};
+  const coverage=`House: ${h.state||'starting'} · ${counts.pending||0} reports pending. Senate: ${sen.state||'not configured'}.`;
+  const rows=j.trades||[];
+  const safeLink=v=>{try{const u=new URL(v);return u.protocol==='https:'?u.href:''}catch{return ''}};
+  box.innerHTML=heading+'<div class="sd-foot">'+escHtml(coverage)+'</div><div class="sd-foot">Reported ranges · latest disclosures, independent of the flow period.</div>'+
+    (rows.length?rows.map(t=>{const link=safeLink(t.source_url);return `<div style="padding:12px 0;border-bottom:1px solid var(--line)"><b class="${t.action==='Buy'?'up':t.action==='Sell'?'down':''}">${escHtml(t.action)}</b> · ${escHtml(t.amount)}<div style="margin-top:5px">${escHtml(t.politician)}</div><div class="sd-foot">${escHtml(t.chamber)} · ${escHtml(t.filer_status||"Not verified")} · ${escHtml(t.owner)} · ${escHtml(t.asset_type)}<br>Trade: ${escHtml(t.transaction_date)}<br>Disclosed: ${escHtml(t.disclosure_date)} (${escHtml(t.disclosure_delay_days)}d later)<br>${escHtml(t.source)}${t.amendment?' · Amendment':''}</div>${link?`<a style="color:var(--accent);font-size:12px" href="${escHtml(link)}" target="_blank" rel="noopener noreferrer">View original disclosure ↗</a>`:''}</div>`}).join(''):'<div class="sd-note">No matching disclosures in the records collected so far. Coverage may be incomplete.</div>')+
+    `<div class="sd-foot">Showing ${rows.length} of ${j.total||0}. Open Politician Trades in the sidebar to search all records. Amendments may appear separately.</div>`;
 }
 
 function renderSecList(){

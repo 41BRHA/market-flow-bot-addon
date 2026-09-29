@@ -76,21 +76,24 @@ class MaxPainStore:
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self._lock = threading.RLock()   # the worker writes while requests read — serialise
         self.conn.execute("""CREATE TABLE IF NOT EXISTS maxpain(
             ticker TEXT, expiry TEXT, ts REAL, max_pain REAL, spot REAL)""")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_mp ON maxpain(ticker, ts)")
         self.conn.commit()
 
     def record(self, ticker, expiry, ts, max_pain, spot):
-        self.conn.execute("INSERT INTO maxpain VALUES(?,?,?,?,?)",
-                          (ticker, expiry, ts, max_pain, spot))
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute("INSERT INTO maxpain VALUES(?,?,?,?,?)",
+                              (ticker, expiry, ts, max_pain, spot))
+            self.conn.commit()
 
     def _rows(self, ticker, limit=400):
-        cur = self.conn.execute(
-            "SELECT ts, expiry, max_pain, spot FROM maxpain WHERE ticker=? ORDER BY ts DESC LIMIT ?",
-            (ticker, limit))
-        return cur.fetchall()
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT ts, expiry, max_pain, spot FROM maxpain WHERE ticker=? ORDER BY ts DESC LIMIT ?",
+                (ticker, limit))
+            return cur.fetchall()
 
     def _closest_before(self, rows, target_ts):
         # rows are newest-first; find the newest row at or before target_ts
