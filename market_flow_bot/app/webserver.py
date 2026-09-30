@@ -28,6 +28,7 @@ _LATEST_PATH = ("/data/latest.json" if os.path.isdir("/data")
 _SMART_URL = ""
 _ENGINE = None   # PeriodEngine, set by start()
 _FUNDAMENTALS = None
+_DISPLAY_TIMEZONE = "Europe/London"
 
 
 def company_name(ticker: str, wait_seconds: float = 6.0) -> str:
@@ -91,6 +92,8 @@ class _Handler(BaseHTTPRequestHandler):
             from .politicians import get_trades
             ticker = (parse_qs(parsed.query).get("ticker") or [""])[0]
             return self._send(200, json.dumps(get_trades(_SMART_URL, ticker)).encode(), "application/json")
+        if path == "/api/settings":
+            return self._send(200, json.dumps({"display_timezone": _DISPLAY_TIMEZONE}).encode(), "application/json")
         if path == "/api/trade-prices":
             if _ENGINE is None:
                 return self._send(200, b'{"error":"engine not ready","prices":{}}', "application/json")
@@ -205,10 +208,11 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-def start(port: int = 8099, engine=None, smart_money_url="") -> None:
-    global _ENGINE, _SMART_URL, _FUNDAMENTALS
+def start(port: int = 8099, engine=None, smart_money_url="", display_timezone="Europe/London") -> None:
+    global _ENGINE, _SMART_URL, _FUNDAMENTALS, _DISPLAY_TIMEZONE
     _ENGINE = engine
     _SMART_URL = smart_money_url
+    _DISPLAY_TIMEZONE = display_timezone
     from .fundamentals import FundamentalsService
     _FUNDAMENTALS = FundamentalsService()
 

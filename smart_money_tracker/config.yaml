@@ -1,11 +1,12 @@
 name: Smart Money Tracker
-version: "0.3.0"
+version: "0.5.2"
 slug: smart_money_tracker
 description: Politician disclosures, stock exposure and political-flow mapping with Market Flow integration.
 arch: [amd64, aarch64]
 startup: application
 boot: auto
 init: false
+homeassistant_api: true
 ingress: true
 ingress_port: 8098
 panel_title: Politician Trades
@@ -18,6 +19,9 @@ options:
   fmp_api_key: ""
   senate_pages: 5
   market_flow_url: "http://local-market-flow-bot:8099"
+  notify_service: "notify.adam_mobile"
+  sec_user_agent: ""
+  display_timezone: "Europe/London"
 schema:
   house_enabled: bool
   lookback_days: int(7,1825)
@@ -26,3 +30,6 @@ schema:
   fmp_api_key: password?
   senate_pages: int(1,20)
   market_flow_url: str?
+  notify_service: str
+  sec_user_agent: str?
+  display_timezone: str

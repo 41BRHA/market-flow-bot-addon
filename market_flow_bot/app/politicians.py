@@ -36,8 +36,8 @@ def _candidates(configured):
             break
     cands += ['http://local-smart-money-tracker:8098', 'http://smart-money-tracker:8098']
     seen, out = set(), []
-    if _good and _good not in cands:
-        out.append(_good)           # last-known-good first
+    if _good:
+        out.append(_good)           # last-known-good first, even when configured
         seen.add(_good)
     for c in cands:
         if c and c not in seen:
@@ -47,7 +47,7 @@ def _candidates(configured):
 
 def _try(base, ticker):
     url = base.rstrip('/') + '/api/trades?' + urllib.parse.urlencode(
-        {'ticker': ticker, 'limit': 20, 'grouped': '1'})
+        {'ticker': ticker, 'limit': 20, 'grouped': '1', 'market_bridge': '1'})
     with urllib.request.urlopen(url, timeout=4) as r:
         raw = r.read(1_000_001)
     if len(raw) > 1_000_000:
@@ -78,12 +78,18 @@ def get_trades(base_url, ticker):
             break
         except Exception:                 # noqa: BLE001 - try the next candidate
             tried.append(base.replace('http://', '').split(':')[0])
-    if result is None:
+    if result is None and cached and cached[1].get('available'):
+        # A transient add-on/DNS timeout should not replace useful data with an
+        # error card. Keep the last success and retry shortly on the next open.
+        result = dict(cached[1]);result['stale_bridge'] = True
+    elif result is None:
         result = {'available': False, 'trades': [],
                   'error': 'Smart Money Tracker not reachable. Tried: ' + ', '.join(tried)
                            + '. Check the tracker add-on is running, or set smart_money_url to its hostname.'}
     with _lock:
         if len(_cache) > 1000:
             _cache.clear()
-        _cache[ticker] = (time.monotonic(), result)
+        # Stale fallbacks get a short retry window; healthy results keep 60 s.
+        stamp=time.monotonic()-55 if result.get('stale_bridge') else time.monotonic()
+        _cache[ticker] = (stamp, result)
     return result

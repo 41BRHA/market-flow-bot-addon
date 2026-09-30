@@ -74,6 +74,11 @@ def amount_summary(trades):
     }
 
 
+def alert_identity(politician, disclosure_date, trades):
+    ids='|'.join(sorted(str(t.get('id') or t.get('source_id') or '') for t in trades))
+    return hashlib.sha256(f'{politician}|{disclosure_date}|{ids}'.encode()).hexdigest()
+
+
 def normalise(row, source, source_id):
     sym = ticker(row.get('ticker') or row.get('symbol'))
     if not sym:
@@ -127,6 +132,10 @@ class Store:
         CREATE INDEX IF NOT EXISTS trades_ticker_date ON trades(ticker,disclosure_date);
         CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY, payload TEXT, state TEXT DEFAULT 'pending',
           checked TEXT, error TEXT, digest TEXT, parsed INTEGER DEFAULT 0, skipped INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS alert_subscriptions(politician TEXT PRIMARY KEY COLLATE NOCASE,
+          enabled INTEGER NOT NULL DEFAULT 0, actions TEXT NOT NULL DEFAULT '["Buy","Sell"]',
+          min_value REAL NOT NULL DEFAULT 0, start_date TEXT NOT NULL, updated TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS alert_deliveries(id TEXT PRIMARY KEY, delivered TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT);''')
         self.db.commit()
         with self.db:
@@ -240,6 +249,61 @@ class Store:
         with self.lock:
             rows=self.db.execute('SELECT politician,count(*) AS n,max(disclosure_date) AS latest FROM trades GROUP BY politician ORDER BY politician COLLATE NOCASE').fetchall()
         return [dict(name=r[0],trade_count=r[1],latest_disclosure=r[2]) for r in rows]
+
+    def alert_subscriptions(self):
+        with self.lock:
+            rows=self.db.execute('SELECT politician,enabled,actions,min_value,start_date,updated FROM alert_subscriptions ORDER BY politician COLLATE NOCASE').fetchall()
+        result=[]
+        for r in rows:
+            try: actions=json.loads(r['actions'])
+            except Exception: actions=['Buy','Sell']
+            result.append(dict(politician=r['politician'],enabled=bool(r['enabled']),actions=actions,
+                               min_value=float(r['min_value']),start_date=r['start_date'],updated=r['updated']))
+        return result
+
+    def set_alert_subscription(self, politician, enabled, actions, min_value=0):
+        politician=' '.join(str(politician or '').split())[:160]
+        if not politician:raise ValueError('Politician is required')
+        allowed={'Buy','Sell','Exchange','Other'}
+        actions=list(dict.fromkeys(str(a) for a in actions if str(a) in allowed))
+        if not actions:raise ValueError('Select at least one transaction type')
+        try:min_value=float(min_value or 0)
+        except (TypeError,ValueError) as exc:raise ValueError('Minimum value must be a number') from exc
+        if min_value<0 or min_value>10_000_000_000:raise ValueError('Minimum value is outside the supported range')
+        names={p['name'].lower():p['name'] for p in self.people()}
+        canonical=names.get(politician.lower())
+        if not canonical:raise ValueError('Politician is not in the collected records')
+        now=utcnow();today=now[:10]
+        with self.lock,self.db:
+            previous=self.db.execute('SELECT start_date,enabled FROM alert_subscriptions WHERE politician=?',(canonical,)).fetchone()
+            newly_enabled=bool(enabled) and (not previous or not previous['enabled'])
+            start=today if newly_enabled else previous['start_date'] if previous else today
+            self.db.execute('INSERT OR REPLACE INTO alert_subscriptions VALUES(?,?,?,?,?,?)',
+                            (canonical,1 if enabled else 0,json.dumps(actions),min_value,start,now))
+            if enabled:
+                rows=self.db.execute('SELECT payload FROM trades WHERE politician=? COLLATE NOCASE',(canonical,)).fetchall()
+                groups={}
+                for row in rows:
+                    trade=json.loads(row[0])
+                    if trade.get('action') in actions:groups.setdefault(trade.get('disclosure_date',''),[]).append(trade)
+                for day,trades in groups.items():
+                    self.db.execute('INSERT OR IGNORE INTO alert_deliveries VALUES(?,?)',
+                                    (alert_identity(canonical,day,trades),now))
+        return next(x for x in self.alert_subscriptions() if x['politician'].lower()==canonical.lower())
+
+    def matching_alert(self, politician, disclosure_date):
+        with self.lock:
+            row=self.db.execute('SELECT * FROM alert_subscriptions WHERE politician=? COLLATE NOCASE AND enabled=1',(politician,)).fetchone()
+        if not row or str(disclosure_date or '')<row['start_date']:return None
+        try:actions=json.loads(row['actions'])
+        except Exception:actions=['Buy','Sell']
+        return dict(politician=row['politician'],actions=actions,min_value=float(row['min_value']),start_date=row['start_date'])
+
+    def alert_delivered(self, identity):
+        with self.lock:return self.db.execute('SELECT 1 FROM alert_deliveries WHERE id=?',(identity,)).fetchone() is not None
+
+    def mark_alert_delivered(self, identity):
+        with self.lock,self.db:self.db.execute('INSERT OR IGNORE INTO alert_deliveries VALUES(?,?)',(identity,utcnow()))
 
     def tickers(self):
         with self.lock:rows=self.db.execute('SELECT DISTINCT ticker FROM trades WHERE ticker!="" ORDER BY ticker').fetchall()

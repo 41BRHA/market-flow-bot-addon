@@ -10,6 +10,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_OPTIONS_PATH = os.environ.get("OPTIONS_FILE", "/data/options.json")
 
@@ -95,6 +96,7 @@ class WebullCfg:
 
 @dataclass
 class Config:
+    display_timezone: str = "Europe/London"
     data_source: str = "yahoo"
     poll_interval_seconds: int = 900
     sessions: dict[str, bool] = field(default_factory=lambda: {"premarket": True, "regular": True, "postmarket": False})
@@ -124,6 +126,7 @@ class Config:
         alerts = AlertCfg(**{k: al[k] for k in al if k in AlertCfg.__annotations__})
         alerts.apply_quiet_floors()
         return cls(
+            display_timezone=cls.valid_timezone(raw.get("display_timezone", "Europe/London")),
             data_source=raw.get("data_source", "yahoo"),
             poll_interval_seconds=int(raw.get("poll_interval_seconds", 900)),
             sessions=raw.get("sessions", {"premarket": True, "regular": True, "postmarket": False}),
@@ -142,6 +145,15 @@ class Config:
             notify=NotifyCfg(**{k: nt[k] for k in nt if k in NotifyCfg.__annotations__}),
             webull=WebullCfg(**{k: wb[k] for k in wb if k in WebullCfg.__annotations__}),
         )
+
+    @staticmethod
+    def valid_timezone(value: Any) -> str:
+        value = str(value or "Europe/London").strip()
+        try:
+            ZoneInfo(value)
+            return value
+        except (ZoneInfoNotFoundError, ValueError):
+            return "Europe/London"
 
     @property
     def all_symbols(self) -> list[str]:

@@ -1,3 +1,15 @@
+# 0.17.3
+
+- Prevent intermittent per-stock “Smart Money Tracker not reachable” cards by marking Market Flow bridge requests and avoiding a circular pricing callback.
+- Try the last-known working add-on hostname first and retain the last successful stock disclosure response during a temporary timeout.
+
+# 0.17.2
+
+- Display dashboard timestamps in a configured IANA timezone instead of the phone/browser timezone.
+- Default to `Europe/London`, including automatic GMT/BST daylight-saving transitions.
+- Apply the timezone to flow updates, sector updates, economic-calendar dates/times and max-pain calculation times.
+- Preserve UTC internally for storage, comparisons and market calculations.
+
 # 0.17.1
 
 - Add quiet notification mode: no routine summaries, stronger conviction/volume/data-density/breadth requirements, four-hour signal cooldowns, eight-hour move cooldowns and a rolling four-alert hourly cap.

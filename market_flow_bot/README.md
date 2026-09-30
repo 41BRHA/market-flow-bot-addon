@@ -1,5 +1,8 @@
 # Market Flow Bot (Home Assistant add-on)
 
+Displayed times default to `Europe/London` and automatically follow GMT/BST.
+Use the `display_timezone` add-on option for another IANA timezone.
+
 Watches an AI-infrastructure basket against a software basket and alerts you when
 capital is rotating between them — a ratio break, a basket divergence, a volume
 spike, or a breadth split. Alerts are pushed into Home Assistant, which fans them

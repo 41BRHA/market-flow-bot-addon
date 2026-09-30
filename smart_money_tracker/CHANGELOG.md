@@ -1,3 +1,33 @@
+# 0.5.2
+
+- Add a cache-only response mode for requests originating inside Market Flow.
+- Break the Market Flow → Smart Money → Market Flow circular wait that could exceed the bridge timeout on uncached stocks.
+
+# 0.5.1
+
+- Display operational timestamps in a configured IANA timezone rather than the viewing device's timezone.
+- Default to `Europe/London`, with automatic GMT/BST daylight-saving transitions.
+- Format collection checks and market-price timestamps consistently while retaining UTC in persistent storage.
+
+# 0.5.0
+
+- Add a separate Notable Investors area backed by official SEC 13F filings.
+- Start with a curated set of Berkshire Hathaway, Pershing Square, Scion, Bridgewater and Duquesne filing entities.
+- Compare share counts against the prior distinct quarter and label New, Increased, Reduced, Exited and Unchanged positions.
+- Handle same-quarter amendments without mistaking the original report for the prior quarter.
+- Filter by manager, issuer/CUSIP, change type and minimum position value; sort by value, portfolio weight or absolute value change.
+- Add opt-in per-manager notifications with change-type/value thresholds, historical baselining and persistent duplicate protection.
+- Require a configurable descriptive SEC user agent and collect on a low-frequency eight-hour cycle.
+- Preserve official identifiers and never guess absent 13F tickers.
+
+# 0.4.0
+
+- Add an opt-in **My alerts** view for selecting individual politicians.
+- Allow Buy only, Sell only, Buy/Sell or all-transaction alerts plus a minimum estimated filing value.
+- Combine matching transactions into one notification per newly stored politician filing batch.
+- Baseline existing records when alerts are enabled and persist delivery identities, preventing historical floods and duplicate notifications after restarts or re-parsing.
+- Deliver through a configurable Home Assistant `notify.*` service. CSV imports never create push alerts.
+
 # 0.3.0
 
 - Add Stock Exposure: one summarised row per ticker across collected disclosures.

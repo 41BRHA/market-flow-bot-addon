@@ -1,5 +1,10 @@
 # Market Flow Bot — configuration (multi-sector)
 
+Dashboard timestamps use `display_timezone`, defaulting to `Europe/London`.
+This automatically follows GMT/BST. Other IANA names such as `Europe/Warsaw`
+or `America/New_York` can be set in the add-on configuration. Stored market
+timestamps remain UTC so changing the display timezone does not alter data.
+
 ## What it measures
 Every cycle it builds a **relative-strength leaderboard** of all configured
 sectors and reads rotation off it. You can't watch money move between sectors

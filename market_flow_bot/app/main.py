@@ -76,7 +76,8 @@ def run() -> None:
     # Period backend: serves any window on demand, cache-first via the bar-store.
     engine = PeriodEngine(lambda: sectors, cfg.benchmark, provider, bars,
                           mp_store=mp_store, mp_worker=mp_worker)
-    webserver.start(cfg.ingress_port, engine=engine, smart_money_url=cfg.smart_money_url)
+    webserver.start(cfg.ingress_port, engine=engine, smart_money_url=cfg.smart_money_url,
+                    display_timezone=cfg.display_timezone)
     engine.warm()   # pre-compute common windows (1d/3d/6h/3h/1h) in the background
     total = sum(len(s.symbols) for s in sectors)
     log.info("Up. source=%s sectors=%d constituents=%d symbols=%d poll=%ss benchmark=%s",

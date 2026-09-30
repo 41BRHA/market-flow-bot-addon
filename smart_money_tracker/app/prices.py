@@ -118,6 +118,30 @@ class PriceBridge:
                 trade['directional_return_pct'] = None
         return out
 
+    def enrich_cached(self,trades):
+        """Enrich without HTTP, used when the caller is Market Flow itself.
+
+        This breaks the Market Flow -> Smart Money -> Market Flow circular wait.
+        The normal background warmer and dashboard requests still populate the
+        same cache, so available prices and scores are retained.
+        """
+        out=[dict(t) for t in trades]
+        with self.lock:
+            found={key:value[1] for key,value in self.cache.items()}
+        for trade in out:
+            price=found.get(self._key(trade),{})
+            trade['estimated_price']=price.get('estimated_price')
+            trade['estimated_price_date']=price.get('price_date')
+            trade['current_price']=price.get('current_price')
+            trade['current_price_asof']=price.get('current_asof')
+            trade['price_pending']=not bool(price) or bool(price.get('pending',False))
+            try:
+                estimate=float(trade['estimated_price']);current=float(trade['current_price'])
+                market_return=(current/estimate-1)*100
+                trade['directional_return_pct']=round(market_return if trade.get('action')=='Buy' else -market_return,2)
+            except (TypeError,ValueError,ZeroDivisionError):trade['directional_return_pct']=None
+        return out
+
     def _fetch_stocks(self,tickers,details=False):
         query=urllib.parse.urlencode([('ticker',ticker) for ticker in tickers]+([('details','1')] if details else []))
         last=None

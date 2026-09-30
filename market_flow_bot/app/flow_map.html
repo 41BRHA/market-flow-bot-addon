@@ -242,6 +242,11 @@
 
 /* ---- fetch health (live bot will publish these). ---- */
 let STATUS={fetched:0, total:0, updated:Date.now()};   // reassigned per period; must be `let`
+let APP_TZ='Europe/London';
+const _parts=(value,options)=>new Intl.DateTimeFormat('en-GB',{timeZone:APP_TZ,...options}).formatToParts(new Date(value));
+const _part=(parts,type)=>parts.find(x=>x.type===type)?.value||'';
+const fmtTime=value=>new Intl.DateTimeFormat('en-GB',{timeZone:APP_TZ,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(value));
+async function loadSettings(){try{const r=await fetch('api/settings',{cache:'no-store'}),j=await r.json();if(j.display_timezone)APP_TZ=j.display_timezone}catch(e){}}
 
 function renderStatus(){
   const dot=document.getElementById('hdot'), txt=document.getElementById('statustxt');
@@ -251,9 +256,9 @@ function renderStatus(){
   if(currentPeriod==='Live'){
     if(!LIVE_DATA){ dot.style.background="var(--muted)"; txt.textContent="Live · waiting for the bot's first cycle…"; return; }
     dot.style.background=hcol;
-    const t=new Date(STATUS.updated), hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0');
+    const shown=fmtTime(STATUS.updated);
     const ago=Math.max(0,Math.round((Date.now()-STATUS.updated)/60000));
-    txt.textContent=`● LIVE · ${STATUS.fetched}/${STATUS.total} symbols · updated ${hh}:${mm} (${ago<1?"just now":ago+" min ago"})`
+    txt.textContent=`● LIVE · ${STATUS.fetched}/${STATUS.total} symbols · updated ${shown} (${ago<1?"just now":ago+" min ago"})`
                      + (STATUS.stale?" · data delayed":"");
     return;
   }
@@ -344,14 +349,14 @@ function escHtml(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt
    1 = everything. Days are scrolled with the ‹ › arrows. */
 let EVENTS=[], EV_UPDATED=null, EV_DAYS=[], EV_DAYIDX=0, EV_LEVEL=3;
 
-const _dayKey=d=>{const x=new Date(d); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');};
+const _dayKey=d=>{const p=_parts(d,{year:'numeric',month:'2-digit',day:'2-digit'});return _part(p,'year')+'-'+_part(p,'month')+'-'+_part(p,'day');};
 const _todayKey=()=>_dayKey(Date.now());
 function _dayLabel(key){
-  const [y,m,d]=key.split('-').map(Number); const dt=new Date(y,m-1,d);
+  const [y,m,d]=key.split('-').map(Number); const dt=new Date(Date.UTC(y,m-1,d,12));
   const tk=_todayKey(), tmr=_dayKey(Date.now()+864e5), ytd=_dayKey(Date.now()-864e5);
   const rel = key===tk?'Today' : key===tmr?'Tomorrow' : key===ytd?'Yesterday' : '';
-  const wd=dt.toLocaleDateString([], {weekday:'long'});
-  const dd=dt.toLocaleDateString([], {month:'short', day:'numeric'});
+  const wd=dt.toLocaleDateString('en-GB', {timeZone:'UTC',weekday:'long'});
+  const dd=dt.toLocaleDateString('en-GB', {timeZone:'UTC',month:'short', day:'numeric'});
   return {top: rel||wd, bot: rel?`${wd} · ${dd}`:dd};
 }
 
@@ -370,21 +375,21 @@ function renderEvents(){
   if(!rows.length){
     const tier=EV_LEVEL===3?'high-impact ':EV_LEVEL===2?'medium/high ':'';
     list.innerHTML=`<div class="ev-empty">No ${tier}events this day.</div>`;
-    foot.textContent = EV_UPDATED?("updated "+new Date(EV_UPDATED).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})):"";
+    foot.textContent = EV_UPDATED?("updated "+fmtTime(EV_UPDATED)+" · "+APP_TZ):"";
     return;
   }
   const nextIdx=(key===_todayKey())?rows.findIndex(e=>Date.parse(e.datetime_utc)>now):-1;
   const fld=(k,v,cls)=>`<div class="f"><div class="k">${k}</div><div class="v ${cls||''}">${v?escHtml(v):'—'}</div></div>`;
   list.innerHTML=rows.map((e,i)=>{
-    const t=new Date(e.datetime_utc), hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0');
+    const shown=fmtTime(e.datetime_utc);
     const lvl=e.level||3;
     const fap=`<div class="ev-fap">${fld('Forecast',e.forecast)}${fld('Actual',e.actual,e.actual?'act':'dim')}${fld('Previous',e.previous)}</div>`;
     return `<div class="ev-row ${i===nextIdx?'next':''}">`
-      +`<div class="ev-time">${hh}:${mm}</div>`
+      +`<div class="ev-time">${shown}</div>`
       +`<div style="min-width:0;flex:1 1 auto"><div class="ev-title">${escHtml(e.title)}<span class="ev-dots l${lvl}">${'•'.repeat(lvl)}</span></div>${fap}</div>`
       +`</div>`;
   }).join("");
-  foot.textContent = EV_UPDATED ? ("forecast/previous from calendar · actual fills in after release · updated "+new Date(EV_UPDATED).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})) : "";
+  foot.textContent = EV_UPDATED ? ("forecast/previous from calendar · actual fills in after release · updated "+fmtTime(EV_UPDATED)+" · "+APP_TZ) : "";
 }
 
 async function loadEvents(force){
@@ -475,8 +480,8 @@ async function openSector(name, key){
     const top=[...SECTOR_DATA].sort((a,b)=>b.flow-a.flow)[0];
     if(!SECTOR_DATA.some(s=>s.name===SECTOR_SEL)) SECTOR_SEL = top?top.name:null;
     renderSector();
-    const upd=SECTOR_UPDATED?new Date(SECTOR_UPDATED):null;
-    document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · ${SECTOR_DATA.length} stocks`+(upd?` · updated ${String(upd.getHours()).padStart(2,'0')}:${String(upd.getMinutes()).padStart(2,'0')}`:'');
+    const upd=SECTOR_UPDATED||null;
+    document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · ${SECTOR_DATA.length} stocks`+(upd?` · updated ${fmtTime(upd)}`:'');
     document.getElementById('hdot').style.background='var(--in)';
   }catch(e){
     document.getElementById('secDetail').innerHTML='<div class="sd-name">fetch failed</div>';
@@ -527,7 +532,7 @@ function renderSecDetail(){
     const cls=v>0?'up':v<0?'down':'', arw=v>0?'▲':v<0?'▼':'•', val=(v>0?'+':'')+(Math.round(v*100)/100);
     return `<div class="sd-hist"><span class="k">${label}</span><span class="v ${cls}">${arw} ${val}</span></div>`;
   };
-  const calc = s.mpAt? new Date(s.mpAt) : null;
+  const calc = s.mpAt||null;
   box.innerHTML =
     `<div class="sd-tkr">${escHtml(s.name)} <span>${spot}</span></div>`+
     `<div class="sd-company" id="companyName">Loading company name…</div>`+
@@ -542,7 +547,7 @@ function renderSecDetail(){
     (note?`<div class="sd-note">${note}</div>`:'')+
     `<div class="sd-hist-h">Max-pain history</div>`+
     hist('vs last calc', s.vsLast)+hist('vs 1 day ago', s.vs1d)+hist('vs 1 week ago', s.vs1w)+
-    (calc?`<div class="sd-foot">calculated ${String(calc.getHours()).padStart(2,'0')}:${String(calc.getMinutes()).padStart(2,'0')} · held until next refresh</div>`:'') + `<div id="politicianTrades" style="border-top:1px solid var(--line);margin-top:18px;padding-top:14px"><b>Politician trades</b><div class="sd-foot">Loading disclosures…</div></div>`;
+    (calc?`<div class="sd-foot">calculated ${fmtTime(calc)} · ${escHtml(APP_TZ)} · held until next refresh</div>`:'') + `<div id="politicianTrades" style="border-top:1px solid var(--line);margin-top:18px;padding-top:14px"><b>Politician trades</b><div class="sd-foot">Loading disclosures…</div></div>`;
   loadFundamentals(s.name);
   loadPoliticianTrades(s.name);
 }
@@ -882,16 +887,13 @@ addEventListener('popstate',()=>{
   if(cleaningGuard){cleaningGuard=false;return;}
   if(inputGuard){inputGuard=false;if(isEditor(document.activeElement))document.activeElement.blur();}
 });
-current=[];
-applyTheme(saved);
-buildPills();
-buildSectorPills();                    // period tabs for the sector drill-down
-setPeriod('1d');                       // default view = last 1 day
-loadLive();                            // warm Live data in the background (instant when tapped)
-setInterval(loadLive, 60000);
-setInterval(refreshCurrent, 120000);   // keep the on-screen period quietly up to date
-loadEvents();
-setInterval(loadEvents, 300000);
+async function boot(){
+  await loadSettings();
+  current=[];applyTheme(saved);buildPills();buildSectorPills();
+  setPeriod('1d');loadLive();loadEvents();
+  setInterval(loadLive,60000);setInterval(refreshCurrent,120000);setInterval(loadEvents,300000);
+}
+boot();
 </script>
 </body>
 </html>

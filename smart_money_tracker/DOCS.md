@@ -2,8 +2,8 @@
 
 This bundle contains:
 
-- **Market Flow Bot 0.17.1**: market flow, quieter named notifications and the low-frequency market-data bridge used by politician stock exposure.
-- **Smart Money Tracker 0.3.0**: disclosures, stock exposure and politician flow mapping in one linked add-on.
+- **Market Flow Bot 0.17.3**: market flow, quieter named notifications, configurable display timezone and a resilient Smart Money bridge.
+- **Smart Money Tracker 0.5.2**: politician disclosures, configurable display timezone, cache-safe Market Flow integration, SEC 13F tracking and selectable filing alerts.
 
 ## Install locally in Home Assistant
 
@@ -21,6 +21,7 @@ This bundle contains:
 
    This is the internal DNS name for a locally installed add-on. If installed from a repository rather than Local add-ons, substitute that installation's actual hostname. Do not use a Nabu Casa or ingress browser URL here.
 6. Open **Politician Trades**. Collection starts automatically. Then open Market Flow, enter a sector, select a stock, and scroll its details to **Politician trades**.
+7. To enable 13F collection, set `sec_user_agent` to a descriptive app name and contact email in Smart Money's configuration, then restart it. This identifies your low-frequency requests to the SEC as required by its fair-access guidance.
 
 No external port mapping is required. Access the dashboards through Home Assistant ingress. The internal API relies on the trusted add-on network; do not publish port 8098 to the internet.
 
@@ -34,6 +35,7 @@ No external port mapping is required. Access the dashboards through Home Assista
 - Score/date/value sorting plus minimum/maximum estimated-value filters. Value filters can apply to a whole filing or to each individual transaction.
 - A clearly labelled midpoint estimate for each bounded transaction range and a summed estimate/range on every collapsed filing row. Open-ended ranges use and identify their minimum.
 - A Stock Exposure page aggregating Buy, Sell, gross and net estimated disclosed value for every collected ticker.
+- Opt-in Home Assistant notifications for selected politicians, with transaction and minimum-value filters, historical baselining and persistent duplicate protection.
 - Exposure filters for sector, industry, politician, chamber, transaction type, value, participation and average politician score.
 - Per-stock drill-down with current price, valuation, nearest-expiry max pain, expiry, distance from max pain, politicians and source transactions.
 - A politician-only radial flow map grouped by sector, with disclosure-date or transaction-date periods.
@@ -44,6 +46,7 @@ No external port mapping is required. Access the dashboards through Home Assista
 - A two-way internal link: Market Flow displays grouped disclosures; Smart Money reads cached historical/latest prices from Market Flow. Smart Money runs no second Yahoo downloader.
 - Estimated trade-date close, latest price, direction-adjusted performance and a transparent politician Trade Score.
 - Full company name, market cap, P/E, price/book, margin, growth and 52-week range in Market Flow's left stock panel.
+- A separate Notable Investors view for curated SEC 13F managers, quarterly New/Increased/Reduced/Exited comparisons, issuer/CUSIP filtering and opt-in combined alerts.
 
 ## Senate connection
 
@@ -64,6 +67,9 @@ CSV import works without that service. Imported records stay labelled `csv_impor
 | fmp_api_key | blank | Optional Senate provider credential |
 | senate_pages | 5 | Bounded latest-page Senate collection |
 | market_flow_url | http://local-market-flow-bot:8099 | Internal price-cache link to Market Flow |
+| notify_service | notify.adam_mobile | Home Assistant service for selected filing alerts |
+| sec_user_agent | blank | Descriptive SEC request identity with contact email; 13F collection remains paused until set |
+| display_timezone | Europe/London | IANA timezone used for displayed timestamps; UTC remains the internal storage format |
 
 Manual source checks are limited to once per minute. Failed/partial House reports retry after one day; fully parsed reports are rechecked after seven days as the backlog allows. A restart resumes the same database. Data is in the new add-on's `/data/disclosures.db`, independent of Market Flow's databases.
 
@@ -80,11 +86,13 @@ Manual source checks are limited to once per minute. Failed/partial House report
 - Filings with no explicit ticker, scanned pages and unsupported layouts are incomplete. Parsing is not OCR. Some legitimate non-listed investments therefore appear in the report-review count.
 - Amendments are flagged when detectable, but are not reconciled with original disclosures. Check the source PDF.
 - The House index can include former members and other filers. The extracted filer status is displayed when available; current elected-office status is not independently verified.
-- Only House periodic transaction reports are collected automatically in the free path. Annual holdings, corporate insiders, 13F institutions and 13D/13G filings are future extensions.
+- 13F reports are delayed quarterly holdings snapshots, not trade confirmations. They do not disclose exact trade dates or execution prices and may be filed up to 45 days after quarter-end.
+- Official 13F tables generally identify securities by issuer, class and CUSIP rather than a dependable exchange ticker. The tracker deliberately leaves ticker blank instead of guessing.
+- Corporate-insider Forms 3/4/5 and 13D/13G beneficial-ownership filings are not collected in this stage.
 
 ## Review and validation
 
-During this build, 21 Python regression tests passed, including two official PDF fixtures. Focused tests also covered midpoint/range totals, stock aggregation, exposure filters, score enrichment, cache-first current prices, sector classification, max-pain calculations and distance, stock drill-down, persistent expansion, the mobile Back guard and the politician flow map. Both dashboard scripts pass JavaScript syntax checks. Browser screenshot validation could not run because the browser binary is not installed in the build environment. A Home Assistant/Docker deployment and authenticated Senate fetch still need testing on your installation.
+During this build, the existing 21 Python regression tests and five focused 13F tests passed. The new tests cover XML units, conservative ticker handling, share-based direction, amendments and first-enable alert baselining. Dashboard JavaScript passes syntax validation. A Home Assistant/Docker deployment, live SEC collection with your configured user agent and authenticated Senate fetch still need testing on your installation.
 
 To roll back the Market Flow UI integration, restore/rebuild the v0.15.3 source folder while retaining the existing add-on data. Smart Money can remain separately installed. No Market Flow DB migration is introduced by this integration.
 
@@ -94,3 +102,5 @@ To roll back the Market Flow UI integration, restore/rebuild the v0.15.3 source 
 - House PTR: `https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{YEAR}/{DocID}.pdf`
 - FMP Senate docs: https://site.financialmodelingprep.com/developer/docs/stable/senate-latest
 - Home Assistant internal naming: https://developers.home-assistant.io/docs/apps/communication/
+- SEC EDGAR submissions: `https://data.sec.gov/submissions/CIK##########.json`
+- SEC filing archives: `https://www.sec.gov/Archives/edgar/data/`

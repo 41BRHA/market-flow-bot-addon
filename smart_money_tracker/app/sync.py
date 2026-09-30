@@ -28,8 +28,8 @@ def download(url, max_bytes=20_000_000):
 
 
 class Collector:
-    def __init__(self,store,options):
-        self.store=store;self.options=options
+    def __init__(self,store,options,alerts=None):
+        self.store=store;self.options=options;self.alerts=alerts
         self.lock=threading.Lock();self.wake=threading.Event();self.stop=threading.Event()
         self.store.set_meta('running',False)
         self.thread=None
@@ -90,6 +90,7 @@ class Collector:
                 if not content.startswith(b'%PDF'): raise ValueError('Expected PDF response')
                 rows,skipped=parse_pdf(content,report)
                 self.store.save_report(report['id'],rows,skipped,hashlib.sha256(content).hexdigest())
+                if self.alerts:self.alerts.process(rows)
             except Exception as e:
                 self.store.report_error(report['id'],str(e))
             if self.stop.wait(1): break
@@ -115,6 +116,7 @@ class Collector:
                 if len(data)<100: truncated=False;break
                 if self.stop.wait(1): break
             self.store.add_rows(rows)
+            if self.alerts:self.alerts.process(rows)
             status.update(state='ready',checked_at=utcnow(),last_success=utcnow(),loaded=len(rows),skipped=skipped,
                           limited_to_latest_pages=truncated,error=None)
         except Exception as e:

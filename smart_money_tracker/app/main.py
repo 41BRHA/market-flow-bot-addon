@@ -4,6 +4,7 @@ import math
 import os
 import threading
 import time
+from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
@@ -11,6 +12,8 @@ from .core import Store,estimated_amount,import_csv,ticker
 from .prices import PriceBridge,politician_score
 from .profiles import ProfileService
 from .sync import Collector
+from .alerts import FilingAlerts
+from .investors import InvestorStore,InvestorCollector
 
 
 def start_stock_refresh(store,prices,interval=8*3600):
@@ -25,7 +28,7 @@ def start_stock_refresh(store,prices,interval=8*3600):
     threading.Thread(target=loop,daemon=True).start()
 
 
-def make_handler(store,collector,prices=None,profiles=None):
+def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors=None,investor_collector=None,display_timezone='Europe/London'):
     class Handler(BaseHTTPRequestHandler):
         def send(self,code,obj,ctype='application/json'):
             body=obj if isinstance(obj,bytes) else json.dumps(obj,allow_nan=False).encode()
@@ -39,7 +42,22 @@ def make_handler(store,collector,prices=None,profiles=None):
             p=urlparse(self.path);q={k:v[0] for k,v in parse_qs(p.query).items()}
             try:
                 if p.path=='/api/status': return self.send(200,store.status())
+                if p.path=='/api/settings': return self.send(200,{'display_timezone':display_timezone})
                 if p.path=='/api/people': return self.send(200,{'people':store.people()})
+                if p.path=='/api/investors':
+                    return self.send(200,{'managers':investors.managers(),'status':investors.status(investor_collector.configured)})
+                if p.path=='/api/investor-holdings':
+                    result=investors.comparison(q.get('cik',''),q.get('change',''),q.get('query',''),q.get('min_value',0),q.get('sort','value_desc'))
+                    result['status']=investors.status(investor_collector.configured);return self.send(200,result)
+                if p.path=='/api/alerts':
+                    subscriptions={x['politician'].lower():x for x in store.alert_subscriptions()}
+                    people=[]
+                    for person in store.people():
+                        rule=subscriptions.get(person['name'].lower(),{})
+                        people.append({**person,'enabled':bool(rule.get('enabled',False)),
+                            'actions':rule.get('actions',['Buy','Sell']),'min_value':rule.get('min_value',0),
+                            'alert_start_date':rule.get('start_date')})
+                    return self.send(200,{'people':people,'status':alerts.status() if alerts else {'configured':False,'selected':0}})
                 if p.path=='/api/stocks':
                     rows=store.stock_exposure(q.get('person',''),q.get('chamber',''),q.get('action',''),
                         q.get('since',''),q.get('until',''),q.get('date_basis','disclosure'))
@@ -99,14 +117,15 @@ def make_handler(store,collector,prices=None,profiles=None):
                     return self.send(200,result)
                 if p.path=='/api/trades':
                     result=store.search(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),q.get('limit',50),q.get('offset',0))
+                    bridge=q.get('market_bridge') in ('1','true','yes')
                     if prices is not None:
-                        result['trades']=prices.enrich(result['trades'])
+                        result['trades']=prices.enrich_cached(result['trades']) if bridge else prices.enrich(result['trades'])
                     if q.get('grouped') in ('1','true','yes'):
                         groups=store.disclosures(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),
                                                 q.get('min_value',''),q.get('max_value',''),q.get('value_scope','filing'))
                         people=list(dict.fromkeys(g['politician'] for g in groups))
                         history=store.trades_for_people(people)
-                        enriched=prices.enrich(history) if prices is not None else history
+                        enriched=(prices.enrich_cached(history) if bridge else prices.enrich(history)) if prices is not None else history
                         by_id={t.get('id'):t for t in enriched}
                         by_person={}
                         for trade in enriched:by_person.setdefault(trade.get('politician',''),[]).append(trade)
@@ -155,11 +174,28 @@ def make_handler(store,collector,prices=None,profiles=None):
                 content=self.rfile.read(length)
                 path=urlparse(self.path).path
                 if path=='/api/refresh': collector.request();return self.send(202,{'queued':True})
+                if path=='/api/investors/refresh': investor_collector.request();return self.send(202,{'queued':True})
+                if path=='/api/investor-alerts':
+                    payload=json.loads(content.decode('utf-8') or '{}')
+                    if not isinstance(payload.get('enabled'),bool):raise ValueError('Enabled must be true or false')
+                    saved=investors.set_subscription(str(payload.get('cik') or ''),payload['enabled'],payload.get('changes') or [],payload.get('min_value',0))
+                    return self.send(200,{'saved':saved,'status':investors.status(investor_collector.configured)})
+                if path=='/api/alerts':
+                    payload=json.loads(content.decode('utf-8') or '{}')
+                    if not isinstance(payload.get('enabled'),bool):raise ValueError('Enabled must be true or false')
+                    rule=store.set_alert_subscription(payload.get('politician'),payload['enabled'],
+                                                       payload.get('actions') or [],payload.get('min_value',0))
+                    return self.send(200,{'saved':rule,'status':alerts.status() if alerts else {'configured':False}})
+                if path=='/api/alerts/test':
+                    payload=json.loads(content.decode('utf-8') or '{}')
+                    if not alerts or not alerts.send_test(str(payload.get('politician') or 'Selected politician')[:160]):
+                        return self.send(503,{'error':'Notification delivery failed. Check the configured Home Assistant notify service.'})
+                    return self.send(200,{'sent':True})
                 if path=='/api/import':
                     rows=import_csv(content.decode('utf-8-sig'))
                     store.add_rows(rows);return self.send(200,{'accepted':len(rows),'note':'Exact duplicate CSV records are replaced, not added twice.'})
                 return self.send(404,{'error':'Not found'})
-            except (ValueError,UnicodeError) as e: return self.send(400,{'error':str(e)})
+            except (ValueError,UnicodeError,json.JSONDecodeError) as e: return self.send(400,{'error':str(e)})
             except Exception:
                 logging.exception('import failed');return self.send(500,{'error':'Import failed'})
 
@@ -172,10 +208,18 @@ def run():
     base=Path(os.environ.get('TRACKER_DATA','/data'));base.mkdir(parents=True,exist_ok=True)
     options_path=base/'options.json'
     options=json.loads(options_path.read_text()) if options_path.exists() else {}
-    store=Store(str(base/'disclosures.db'));collector=Collector(store,options);collector.start()
+    display_timezone=str(options.get('display_timezone') or 'Europe/London').strip()
+    try:ZoneInfo(display_timezone)
+    except (ZoneInfoNotFoundError,ValueError):
+        logging.warning('invalid display_timezone %r; using Europe/London',display_timezone);display_timezone='Europe/London'
+    store=Store(str(base/'disclosures.db'))
+    alerts=FilingAlerts(store,options.get('notify_service','notify.notify'))
+    collector=Collector(store,options,alerts);collector.start()
+    investors=InvestorStore(str(base/'institutional.db'))
+    investor_collector=InvestorCollector(investors,options.get('sec_user_agent',''),alerts);investor_collector.start()
     prices=PriceBridge(options.get('market_flow_url','http://local-market-flow-bot:8099'))
     start_stock_refresh(store,prices)
     profiles=ProfileService(str(base/'politician_profiles.json'))
-    ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices,profiles)).serve_forever()
+    ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices,profiles,alerts,investors,investor_collector,display_timezone)).serve_forever()
 
 if __name__=='__main__': run()
