@@ -17,8 +17,6 @@ import logging
 import os
 from datetime import datetime, timezone
 from xml.etree import ElementTree as ET
-from zoneinfo import ZoneInfo
-
 import requests
 
 log = logging.getLogger("events")
@@ -29,7 +27,10 @@ FEED_URLS = [
 ]
 # impact string (lower-case) -> importance level (dots). Anything else is dropped.
 IMPACT_LEVEL = {"high": 3, "medium": 2, "low": 1}
-ET_TZ = ZoneInfo("America/New_York")
+# The Fair Economy XML feed publishes its clock values in GMT/UTC.  Treating
+# them as New York local time shifts US releases several hours late when the
+# dashboard converts them to the configured display timezone.
+FEED_TZ = timezone.utc
 _PATH = ("/data/events.json" if os.path.isdir("/data")
          else os.path.join(os.path.dirname(__file__), "events.json"))
 
@@ -40,19 +41,19 @@ def _txt(el, tag: str) -> str:
 
 
 def _parse_dt(date: str, tm: str):
-    """date 'MM-DD-YYYY', time '8:30am' / 'All Day' / 'Tentative'. Returns ET-aware dt or None."""
+    """Parse the feed's GMT/UTC date and clock into an aware datetime."""
     try:
         d = datetime.strptime(date.strip(), "%m-%d-%Y")
     except Exception:
         return None
     t = tm.strip().lower()
     if t in ("", "all day", "tentative", "day"):
-        return d.replace(hour=0, minute=0, tzinfo=ET_TZ)
+        return d.replace(hour=0, minute=0, tzinfo=FEED_TZ)
     try:
         parsed = datetime.strptime(t.replace(" ", ""), "%I:%M%p")
-        return d.replace(hour=parsed.hour, minute=parsed.minute, tzinfo=ET_TZ)
+        return d.replace(hour=parsed.hour, minute=parsed.minute, tzinfo=FEED_TZ)
     except Exception:
-        return d.replace(hour=0, minute=0, tzinfo=ET_TZ)
+        return d.replace(hour=0, minute=0, tzinfo=FEED_TZ)
 
 
 def parse_feed(xml_bytes) -> list[dict]:

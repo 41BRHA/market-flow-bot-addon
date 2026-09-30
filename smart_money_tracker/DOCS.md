@@ -3,7 +3,7 @@
 This bundle contains:
 
 - **Market Flow Bot 0.17.3**: market flow, quieter named notifications, configurable display timezone and a resilient Smart Money bridge.
-- **Smart Money Tracker 0.5.2**: politician disclosures, configurable display timezone, cache-safe Market Flow integration, SEC 13F tracking and selectable filing alerts.
+- **Smart Money Tracker 0.5.3**: politician disclosures, stable expanded stock panels, configurable display timezone, cache-safe Market Flow integration, SEC 13F tracking and selectable filing alerts.
 
 ## Install locally in Home Assistant
 

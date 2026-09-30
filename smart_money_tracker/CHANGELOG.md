@@ -1,3 +1,8 @@
+# 0.5.3
+
+- Pause background Stock Exposure refreshes while any stock detail is expanded, preventing open panels from collapsing or moving the page.
+- Manual filter changes still refresh immediately; pending background data retries after the panel is closed.
+
 # 0.5.2
 
 - Add a cache-only response mode for requests originating inside Market Flow.
@@ -68,3 +73,5 @@
 - Normalized disclosure records, amount ranges, owners, source links and dates.
 - Optional Senate provider and validated CSV import.
 - Search dashboard and per-ticker HTTP API for Market Flow.
+- **0.5.4** — Expose the display timezone as a configuration dropdown and keep
+  expanded Stock Exposure rows open during background refreshes.

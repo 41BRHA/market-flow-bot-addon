@@ -1,4 +1,4 @@
-# Smart Money Tracker 0.5.2
+# Smart Money Tracker 0.5.3
 
 Politician-trade disclosures with a separate persistent store, automatic official House PTR collection, optional FMP Senate ingestion, CSV import and a searchable ingress dashboard. Designed to connect to Market Flow's stock detail panel through a read-only HTTP API.
 
