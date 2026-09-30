@@ -265,11 +265,15 @@ def compute(frames, sectors, benchmark_syms, th, ac, prev_dir, session="regular"
     for s in flowboard:
         prev = prev_dir.get(s.name, 0)
         cur = directions[s.name]
+        min_breadth = getattr(ac, "min_breadth_pct", 0.0)
+        breadth_ok = (s.breadth is None or
+                      (s.flow_ratio > 0 and s.breadth >= min_breadth) or
+                      (s.flow_ratio < 0 and s.breadth <= 100.0 - min_breadth))
 
         # flip: money reversed direction with conviction and on real volume
         if (ac.alert_on_flip and prev != 0 and cur != 0 and cur != prev
                 and abs(s.flow_ratio) >= ac.min_flip_ratio and s.rvol >= ac.min_rvol
-                and s.density >= ac.min_density):
+                and s.density >= ac.min_density and breadth_ok):
             io = "into" if cur > 0 else "out of"
             signals.append(Signal(
                 f"flip_{s.name}", "alert", f"Money rotating {io} {s.name}",
@@ -281,7 +285,7 @@ def compute(frames, sectors, benchmark_syms, th, ac, prev_dir, session="regular"
 
         # strong one-directional flow on heavy volume
         elif (ac.alert_on_strong and abs(s.flow_ratio) >= ac.strong_ratio and s.rvol >= ac.min_rvol
-                and s.density >= ac.min_density):
+                and s.density >= ac.min_density and breadth_ok):
             io = "inflow" if s.flow_ratio > 0 else "outflow"
             signals.append(Signal(
                 f"strong_{s.name}", "warning", f"Strong {io}: {s.name}",

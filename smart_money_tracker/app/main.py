@@ -1,13 +1,28 @@
 import json
 import logging
+import math
 import os
+import threading
+import time
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
-from .core import Store,estimated_amount,import_csv
+from .core import Store,estimated_amount,import_csv,ticker
 from .prices import PriceBridge,politician_score
 from .profiles import ProfileService
 from .sync import Collector
+
+
+def start_stock_refresh(store,prices,interval=8*3600):
+    """Warm politician-only market/option caches three times per day."""
+    def loop():
+        while True:
+            tickers=store.tickers()
+            try:
+                if tickers:prices.stock_snapshots(tickers)
+            except Exception:logging.exception('politician stock refresh failed')
+            time.sleep(interval if tickers else 600)
+    threading.Thread(target=loop,daemon=True).start()
 
 
 def make_handler(store,collector,prices=None,profiles=None):
@@ -25,6 +40,63 @@ def make_handler(store,collector,prices=None,profiles=None):
             try:
                 if p.path=='/api/status': return self.send(200,store.status())
                 if p.path=='/api/people': return self.send(200,{'people':store.people()})
+                if p.path=='/api/stocks':
+                    rows=store.stock_exposure(q.get('person',''),q.get('chamber',''),q.get('action',''),
+                        q.get('since',''),q.get('until',''),q.get('date_basis','disclosure'))
+                    market=prices.stock_snapshots([r['ticker'] for r in rows]) if prices is not None else {}
+                    people=list(dict.fromkeys(name for row in rows for name in row['politician_names']))
+                    history=store.trades_for_people(people)
+                    enriched=prices.enrich(history,cache_ttl=8*3600) if prices is not None else history
+                    by_person={}
+                    for trade in enriched:by_person.setdefault(trade.get('politician',''),[]).append(trade)
+                    scores={name:politician_score(by_person.get(name,[])) for name in people}
+                    for row in rows:
+                        row['market']=market.get(row['ticker'],{'ticker':row['ticker'],'pending':True})
+                        rated=[scores[n]['score'] for n in row['politician_names'] if scores.get(n,{}).get('rated_trades',0)>0]
+                        row['average_politician_score']=round(sum(rated)/len(rated),1) if rated else None
+                        row['rated_politicians']=len(rated)
+                        for person_row in row['top_politicians']:person_row['score']=scores.get(person_row['name'],{}).get('score')
+                    available_sectors=sorted({r['market'].get('sector') or 'Unclassified' for r in rows})
+                    available_industries=sorted({r['market'].get('industry') for r in rows if r['market'].get('industry')})
+                    sector=q.get('sector','');industry=q.get('industry','');minimum=float(q['min_value']) if q.get('min_value','').strip() else None
+                    maximum=float(q['max_value']) if q.get('max_value','').strip() else None
+                    min_people=max(0,int(q.get('min_politicians',0) or 0));min_score=float(q['min_score']) if q.get('min_score','').strip() else None
+                    for value in (minimum,maximum,min_score):
+                        if value is not None and not math.isfinite(value):raise ValueError('Stock filters must be finite numbers')
+                    if (minimum is not None and minimum<0) or (maximum is not None and maximum<0):raise ValueError('Value filters cannot be negative')
+                    if minimum is not None and maximum is not None and minimum>maximum:raise ValueError('Minimum value exceeds maximum')
+                    if min_score is not None and not 0<=min_score<=100:raise ValueError('Minimum score must be between 0 and 100')
+                    rows=[r for r in rows if (not sector or r['market'].get('sector')==sector)
+                          and (not industry or r['market'].get('industry')==industry)
+                          and (minimum is None or r['gross_estimated']>=minimum)
+                          and (maximum is None or r['gross_estimated']<=maximum)
+                          and r['politician_count']>=min_people
+                          and (min_score is None or (r['average_politician_score'] is not None and r['average_politician_score']>=min_score))]
+                    sort=q.get('sort','net_desc')
+                    if sort=='net_desc':rows.sort(key=lambda r:(r['net_estimated'],r['gross_estimated']),reverse=True)
+                    elif sort=='net_asc':rows.sort(key=lambda r:(r['net_estimated'],r['gross_estimated']))
+                    elif sort=='gross_desc':rows.sort(key=lambda r:r['gross_estimated'],reverse=True)
+                    elif sort=='politicians_desc':rows.sort(key=lambda r:(r['politician_count'],r['gross_estimated']),reverse=True)
+                    elif sort=='score_desc':rows.sort(key=lambda r:(r['average_politician_score'] is not None,r['average_politician_score'] or 0),reverse=True)
+                    elif sort=='recent':rows.sort(key=lambda r:(r['last_disclosure'],r['last_transaction']),reverse=True)
+                    elif sort=='max_pain':rows.sort(key=lambda r:(r['market'].get('max_pain_distance_pct') is not None,abs(r['market'].get('max_pain_distance_pct') or 0)),reverse=True)
+                    elif sort=='ticker':rows.sort(key=lambda r:r['ticker'])
+                    else:raise ValueError('Invalid stock sort order')
+                    total=len(rows);limit=max(1,min(500,int(q.get('limit',500))));offset=max(0,min(100000,int(q.get('offset',0))))
+                    return self.send(200,{'stocks':rows[offset:offset+limit],'total':total,'limit':limit,'offset':offset,
+                        'sectors':available_sectors,
+                        'industries':available_industries,
+                        'price_link':prices.status() if prices is not None else {'state':'unavailable'},
+                        'refresh_hours':8,'status':store.status()})
+                if p.path=='/api/stock-detail':
+                    symbol=ticker(q.get('ticker',''))
+                    if not symbol:raise ValueError('Invalid ticker')
+                    result=store.search(symbol,limit=100,offset=0);result['trades']=prices.enrich(result['trades']) if prices is not None else result['trades']
+                    for trade in result['trades']:
+                        trade['estimated_value']=estimated_amount(trade)
+                        if profiles is not None:trade['profile']=profiles.get(trade.get('politician',''),trade.get('chamber',''),trade.get('district',''))
+                    result['market']=(prices.stock_snapshots([symbol],details=True).get(symbol,{}) if prices is not None else {})
+                    return self.send(200,result)
                 if p.path=='/api/trades':
                     result=store.search(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),q.get('limit',50),q.get('offset',0))
                     if prices is not None:
@@ -102,6 +174,7 @@ def run():
     options=json.loads(options_path.read_text()) if options_path.exists() else {}
     store=Store(str(base/'disclosures.db'));collector=Collector(store,options);collector.start()
     prices=PriceBridge(options.get('market_flow_url','http://local-market-flow-bot:8099'))
+    start_stock_refresh(store,prices)
     profiles=ProfileService(str(base/'politician_profiles.json'))
     ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices,profiles)).serve_forever()
 

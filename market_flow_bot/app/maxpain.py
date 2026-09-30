@@ -147,14 +147,16 @@ class MaxPainWorker:
         self.spot_fn = spot_fn            # optional: ticker -> spot from bar-store
         self.q: "queue.Queue[str]" = queue.Queue()
         self._queued: set[str] = set()
+        self._attempted: dict[str, float] = {}
         self._lock = threading.Lock()
         threading.Thread(target=self._run, daemon=True).start()
 
-    def request(self, tickers, force=False):
+    def request(self, tickers, force=False, min_age=REFRESH_MIN_AGE):
         now = time.time()
         for t in tickers:
-            if not force and now - self.store.last_ts(t) < REFRESH_MIN_AGE:
-                continue
+            if not force:
+                last=max(self.store.last_ts(t),self._attempted.get(t,0.0))
+                if now-last < max(0,float(min_age)):continue
             with self._lock:
                 if t in self._queued:
                     continue
@@ -171,6 +173,7 @@ class MaxPainWorker:
             finally:
                 with self._lock:
                     self._queued.discard(t)
+                    self._attempted[t]=time.time()
             time.sleep(PACING)
 
     def compute_ticker(self, ticker: str, retries: int = 3):

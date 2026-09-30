@@ -45,6 +45,10 @@ SNAPSHOT_TTL = {"5m": 180, "1h": 1800, "1d": 6 * 3600}
 # The windows the main loop keeps warm each cycle (all 5-minute resolution, so
 # they compute straight from bars the live loop already stored — no Yahoo hit).
 WARM_PERIODS = ["1d", "3d", "6h", "3h", "1h"]
+POLITICIAN_STOCK_REFRESH = 8 * 3600
+GICS_SECTORS = {"Technology", "Financials", "Energy", "Health Care", "Industrials",
+                "Consumer Discretionary", "Consumer Staples", "Utilities", "Materials",
+                "Real Estate", "Communication Services"}
 
 
 def _iso(ts: float) -> str:
@@ -78,6 +82,8 @@ class PeriodEngine:
         self._inflight: set[str] = set()    # keys currently being computed
         self._lock = threading.Lock()
         self._trade_price_inflight = False
+        self._stock_refresh_queue: set[str] = set()
+        self._stock_refresh_running = False
 
     # ---- windows / keys -------------------------------------------------
     def window_for(self, period=None, start=None, end=None):
@@ -285,6 +291,79 @@ class PeriodEngine:
             if start:
                 threading.Thread(target=self._refresh_trade_prices, args=(needs,), daemon=True).start()
         return {"prices": results, "pending": bool(needs)}
+
+    # ---- low-frequency politician-stock snapshots ---------------------
+    def _sector_for_ticker(self, ticker):
+        names=[s.name for s in self.get_sectors() if ticker in s.symbols]
+        primary=next((n for n in names if n in GICS_SECTORS),names[0] if names else "Unclassified")
+        return primary,names
+
+    def _read_stock_snapshot(self, ticker):
+        now=time.time()
+        recent=self.store.get_bars("5m",ticker,now-10*86400,now)
+        if recent.empty:
+            recent=self.store.get_bars("1d",ticker,now-30*86400,now)
+        current=asof=None
+        if not recent.empty:
+            current=round(float(recent["close"].iloc[-1]),4)
+            asof=recent.index[-1].isoformat()
+        sector,themes=self._sector_for_ticker(ticker)
+        result={"ticker":ticker,"current_price":current,"current_asof":asof,
+                "sector":sector,"categories":themes,"pending":current is None}
+        if self.mp_store is not None:
+            h=self.mp_store.history(ticker)
+            if h:
+                result.update(max_pain=round(h["max_pain"],2),max_pain_expiry=h["expiry"],
+                              max_pain_at=_iso(h["calculated_at"]),
+                              max_pain_spot=round(h["spot"],2) if h["spot"] else None)
+                if current:
+                    result["max_pain_distance_pct"]=round((current/h["max_pain"]-1)*100,2) if h["max_pain"] else None
+        return result
+
+    def _stock_refresh_loop(self):
+        while True:
+            with self._lock:
+                batch=sorted(self._stock_refresh_queue)[:100]
+                for symbol in batch:self._stock_refresh_queue.discard(symbol)
+                if not batch:
+                    self._stock_refresh_running=False
+                    return
+            try:
+                frames=self.provider.get_bars(batch,interval="5m",lookback="5d")
+                for symbol,frame in frames.items():self.store.put_bars("5m",symbol,frame)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("politician-stock refresh failed: %s",exc)
+
+    def _request_stock_refresh(self,tickers):
+        with self._lock:
+            self._stock_refresh_queue.update(tickers)
+            start=not self._stock_refresh_running
+            if start:self._stock_refresh_running=True
+        if start:threading.Thread(target=self._stock_refresh_loop,daemon=True).start()
+
+    def stock_snapshots(self,tickers):
+        """Return cache-first current price/category/max-pain data.
+
+        Missing or eight-hour-old prices and option pins are refreshed in the
+        background, so this endpoint remains fast and the politician universe
+        does not join the normal 15-minute Market Flow polling cycle.
+        """
+        clean=[]
+        for ticker in tickers:
+            ticker=str(ticker or "").strip().upper().replace(".","-")
+            if ticker and ticker not in clean:clean.append(ticker)
+        clean=clean[:100]
+        results={ticker:self._read_stock_snapshot(ticker) for ticker in clean}
+        now=datetime.now(timezone.utc)
+        stale=[]
+        for ticker,snapshot in results.items():
+            try:age=(now-datetime.fromisoformat(snapshot["current_asof"])).total_seconds()
+            except (TypeError,ValueError):age=10**12
+            if age>POLITICIAN_STOCK_REFRESH:
+                stale.append(ticker);snapshot["pending"]=True
+        if stale:self._request_stock_refresh(stale)
+        if self.mp_worker is not None:self.mp_worker.request(clean,min_age=POLITICIAN_STOCK_REFRESH)
+        return {"stocks":results,"pending":bool(stale),"refresh_hours":8}
 
     # keep the old name as a blocking alias (used by nothing on the hot path now)
     def compute(self, period=None, start=None, end=None) -> dict:

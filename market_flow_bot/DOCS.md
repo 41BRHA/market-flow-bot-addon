@@ -39,6 +39,20 @@ in both AI-Infra and Technology) is fine and intended — they're separate lense
 - `notify.telegram_*` — optional direct Telegram fallback.
 - `webull.*` — key/secret/region for the live path.
 
+## Quiet notifications (v0.17.1)
+
+`alerts.quiet_mode` defaults to `true`. It disables routine flow summaries and
+enforces conservative minimums even if Home Assistant retained older settings:
+0.55 conviction for a flip, 0.75 for strong flow, 1.5x relative volume, 75%
+data density and 70% aligned breadth for multi-stock sectors. Stock moves need
+10%, sector averages need 3%, signal repeats wait four hours and move repeats
+wait eight hours. A rolling cap permits at most four push notifications per
+hour. The leaderboard sensor and dashboard continue updating normally.
+
+Set `quiet_mode: false` only if you want every individual threshold and summary
+switch to be honoured without those safety floors. Single-stock move alerts use
+the metadata cache to show both ticker and full company name.
+
 ## Webull live path (scaffolded, not yet tested)
 Unchanged from before — see `app/providers/webull.py`. Once your key is issued,
 wiring `get_bars()` (HTTP OHLCV) and `stream()` (MQTT live push) makes every

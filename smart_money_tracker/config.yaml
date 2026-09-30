@@ -1,7 +1,7 @@
 name: Smart Money Tracker
-version: "0.2.3"
+version: "0.3.0"
 slug: smart_money_tracker
-description: Politician disclosures with official House reports, optional Senate feed, and Market Flow integration.
+description: Politician disclosures, stock exposure and political-flow mapping with Market Flow integration.
 arch: [amd64, aarch64]
 startup: application
 boot: auto

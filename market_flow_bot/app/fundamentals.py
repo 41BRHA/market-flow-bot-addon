@@ -8,6 +8,7 @@ import re
 import sqlite3
 import threading
 import time
+import queue
 
 
 def _number(value, positive=False):
@@ -23,7 +24,8 @@ class FundamentalsService:
         self.db=sqlite3.connect(path or os.path.join(base,'fundamentals.db'),check_same_thread=False)
         self.db.execute('PRAGMA busy_timeout=5000')
         self.db.execute('CREATE TABLE IF NOT EXISTS fundamentals(ticker TEXT PRIMARY KEY,payload TEXT,updated REAL,error TEXT)')
-        self.db.commit();self.lock=threading.RLock();self.inflight=set()
+        self.db.commit();self.lock=threading.RLock();self.inflight=set();self.q=queue.Queue()
+        threading.Thread(target=self._worker,daemon=True).start()
 
     def _cached(self,ticker):
         with self.lock:
@@ -40,12 +42,18 @@ class FundamentalsService:
         retry_after=3600 if cached and cached.get('error') else 86400
         with self.lock:
             start=age>retry_after and ticker not in self.inflight
-            if start:self.inflight.add(ticker)
-        if start:threading.Thread(target=self._refresh,args=(ticker,),daemon=True).start()
+            if start:self.inflight.add(ticker);self.q.put(ticker)
         if cached:
             cached['stale']=age>86400;cached['pending']=start
             return cached
         return {'ticker':ticker,'pending':True}
+
+    def get_many(self,tickers):
+        return {ticker:self.get(ticker) for ticker in dict.fromkeys(tickers)}
+
+    def _worker(self):
+        while True:
+            ticker=self.q.get();self._refresh(ticker);time.sleep(1.0)
 
     def _refresh(self,ticker):
         try:
@@ -54,6 +62,8 @@ class FundamentalsService:
             payload={
                 'ticker':ticker,'name':str(info.get('longName') or info.get('shortName') or ticker)[:160],
                 'quote_type':str(info.get('quoteType') or ''),'currency':str(info.get('currency') or ''),
+                'sector':str(info.get('sector') or '')[:100],
+                'industry':str(info.get('industry') or '')[:140],
                 'market_cap':_number(info.get('marketCap'),True),
                 'enterprise_value':_number(info.get('enterpriseValue'),True),
                 'trailing_pe':_number(info.get('trailingPE'),True),

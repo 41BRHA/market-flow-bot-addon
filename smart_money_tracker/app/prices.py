@@ -22,6 +22,7 @@ class PriceBridge:
         self.base_url = self.configured        # kept for external references
         self._good = None                       # last base_url that worked
         self.cache = {}
+        self.stock_cache = {}
         self.lock = threading.Lock()
         self.last_success = None
         self.last_error = None
@@ -72,7 +73,7 @@ class PriceBridge:
                 continue
         raise last or RuntimeError('No Market Flow host reachable')
 
-    def enrich(self, trades):
+    def enrich(self, trades, cache_ttl=60):
         out = [dict(t) for t in trades]
         keys = list(dict.fromkeys(self._key(t) for t in out if t.get('action') in ('Buy', 'Sell')))
         if not keys:
@@ -81,7 +82,7 @@ class PriceBridge:
         with self.lock:
             for key in keys:
                 cached = self.cache.get(key)
-                ttl = 5 if cached and cached[1].get('pending') else 60
+                ttl = 5 if cached and cached[1].get('pending') else max(5,float(cache_ttl))
                 if cached and now - cached[0] < ttl:
                     found[key] = cached[1]
                 else:
@@ -116,6 +117,49 @@ class PriceBridge:
             except (TypeError, ValueError, ZeroDivisionError):
                 trade['directional_return_pct'] = None
         return out
+
+    def _fetch_stocks(self,tickers,details=False):
+        query=urllib.parse.urlencode([('ticker',ticker) for ticker in tickers]+([('details','1')] if details else []))
+        last=None
+        for base in self._candidates():
+            try:
+                req=urllib.request.Request(base+'/api/stock-snapshots?'+query,
+                    headers={'User-Agent':'SmartMoneyTracker/0.3','Accept':'application/json'})
+                with urllib.request.urlopen(req,timeout=5) as response:raw=response.read(2_000_001)
+                if len(raw)>2_000_000:raise ValueError('Stock response too large')
+                data=json.loads(raw)
+                if not isinstance(data,dict) or data.get('error'):raise RuntimeError('Market Flow stock endpoint unavailable')
+                self._good=base;self.last_success=time.time();self.last_error=None
+                return data
+            except Exception as exc:  # noqa: BLE001
+                last=exc
+        self.last_error=type(last).__name__ if last else 'Unavailable'
+        raise last or RuntimeError('No Market Flow host reachable')
+
+    def stock_snapshots(self,tickers,details=False):
+        tickers=list(dict.fromkeys(str(t or '').strip().upper().replace('.','-') for t in tickers if t))[:1000]
+        now=time.monotonic();found={};needed=[]
+        with self.lock:
+            for ticker in tickers:
+                cached=self.stock_cache.get((ticker,details))
+                ttl=60 if cached and (cached[1].get('pending') or cached[1].get('fundamentals_pending') or cached[1].get('max_pain') is None) else 8*3600
+                if cached and now-cached[0]<ttl:found[ticker]=cached[1]
+                else:needed.append(ticker)
+        failed=False
+        for i in range(0,len(needed),75):
+            batch=needed[i:i+75]
+            try:data=self._fetch_stocks(batch,details);received=data.get('stocks',{})
+            except Exception:received={};failed=True
+            with self.lock:
+                for ticker in batch:
+                    value=received.get(ticker,{'ticker':ticker,'pending':True})
+                    self.stock_cache[(ticker,details)]=(now,value);found[ticker]=value
+            if failed:
+                with self.lock:
+                    for ticker in needed[i+75:]:
+                        value={'ticker':ticker,'pending':True};self.stock_cache[(ticker,details)]=(now,value);found[ticker]=value
+                break
+        return found
 
     def status(self):
         if self.last_success:

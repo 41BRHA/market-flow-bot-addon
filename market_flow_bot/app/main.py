@@ -14,7 +14,7 @@ from .maxpain import MaxPainStore, MaxPainWorker
 from .notify import Notifier
 from .providers import make_provider
 from .signals import compute, pct_changes
-from .state import Cooldown, Store, active_session
+from .state import AlertBudget, Cooldown, Store, active_session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("main")
@@ -53,9 +53,11 @@ def run() -> None:
 
     provider = make_provider(cfg)
     notifier = Notifier(cfg.notify, publish_sensor=cfg.publish_sensor)
-    cooldown = Cooldown(cfg.cooldown_minutes)
+    signal_cooldown = max(cfg.cooldown_minutes, 240) if cfg.alerts.quiet_mode else cfg.cooldown_minutes
+    cooldown = Cooldown(signal_cooldown)
     summary_cd = Cooldown(cfg.summary_cooldown_minutes)
     move_cd = Cooldown(cfg.alerts.move_cooldown_minutes)
+    alert_budget = AlertBudget(cfg.alerts.max_notifications_per_hour)
     store = Store()
     saved = store.load()
     prev_dir = saved.get("dir", {})
@@ -169,7 +171,10 @@ def run() -> None:
                         cd = summary_cd if sig.key == "flow_summary" else cooldown
                         if cd.ready(sig.key, now_ts):
                             log.info("[%s] %s: %s", session, sig.title, sig.message)
-                            notifier.send(f"[{session}] {sig.title}", sig.message)
+                            if alert_budget.ready(now_ts):
+                                notifier.send(f"[{session}] {sig.title}", sig.message)
+                            else:
+                                log.info("hourly notification cap reached; suppressed %s", sig.key)
 
                 # ---- price-move alerts (independent of the flow signals) ----
                 # Skipped when the data is stale so a delayed/failed fetch can't
@@ -181,12 +186,18 @@ def run() -> None:
                     ref_lbl = "on the session" if ac.move_reference == "session_open" else "vs prior close"
                     if ac.alert_on_stock_move:
                         movers = sorted((kv for kv in moves.items() if abs(kv[1]) >= ac.stock_move_pct),
-                                        key=lambda kv: abs(kv[1]), reverse=True)[:12]  # cap the flood on a crash day
+                                        key=lambda kv: abs(kv[1]), reverse=True)[:3]
                         for sym, p in movers:
                             if move_cd.ready(f"move_{sym}", now_ts):
                                 last = float(frames[sym]["close"].iloc[-1])
-                                notifier.send(f"{sym} {p:+.1f}%", f"{sym} {p:+.1f}% {ref_lbl} — now ${last:.2f}")
-                                log.info("[%s] move alert: %s %+.1f%%", session, sym, p)
+                                name = webserver.company_name(sym)
+                                label = f"{sym} — {name}" if name else sym
+                                if alert_budget.ready(now_ts):
+                                    notifier.send(f"{label} {p:+.1f}%",
+                                                  f"{label} is {p:+.1f}% {ref_lbl} — now ${last:.2f}")
+                                    log.info("[%s] move alert: %s %+.1f%%", session, label, p)
+                                else:
+                                    log.info("hourly notification cap reached; suppressed move_%s", sym)
                     if ac.alert_on_sector_move:
                         for sec in sectors:
                             vals = [moves[s] for s in sec.symbols if s in moves]
@@ -195,9 +206,12 @@ def run() -> None:
                                 continue
                             sp = sum(vals) / len(vals)
                             if abs(sp) >= ac.sector_move_pct and move_cd.ready(f"smove_{sec.name}", now_ts):
-                                notifier.send(f"{sec.name} sector {sp:+.1f}%",
-                                              f"{sec.name} averaging {sp:+.1f}% {ref_lbl} across {len(vals)} stocks.")
-                                log.info("[%s] sector move alert: %s %+.1f%%", session, sec.name, sp)
+                                if alert_budget.ready(now_ts):
+                                    notifier.send(f"{sec.name} sector {sp:+.1f}%",
+                                                  f"{sec.name} averaging {sp:+.1f}% {ref_lbl} across {len(vals)} stocks.")
+                                    log.info("[%s] sector move alert: %s %+.1f%%", session, sec.name, sp)
+                                else:
+                                    log.info("hourly notification cap reached; suppressed smove_%s", sec.name)
         except Exception as exc:  # noqa: BLE001
             log.exception("cycle error: %s", exc)
         time.sleep(cfg.poll_interval_seconds)

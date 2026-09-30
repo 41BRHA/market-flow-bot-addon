@@ -241,12 +241,70 @@ class Store:
             rows=self.db.execute('SELECT politician,count(*) AS n,max(disclosure_date) AS latest FROM trades GROUP BY politician ORDER BY politician COLLATE NOCASE').fetchall()
         return [dict(name=r[0],trade_count=r[1],latest_disclosure=r[2]) for r in rows]
 
-    def trades_for_people(self, names, limit=10000):
+    def tickers(self):
+        with self.lock:rows=self.db.execute('SELECT DISTINCT ticker FROM trades WHERE ticker!="" ORDER BY ticker').fetchall()
+        return [r[0] for r in rows]
+
+    def stock_exposure(self,person='',chamber='',action='',since='',until='',date_basis='disclosure'):
+        """Aggregate disclosed transaction ranges by ticker.
+
+        This is transaction-flow inference, not a verified holdings ledger:
+        complete opening positions and full/partial-sale status are unavailable.
+        """
+        if date_basis not in ('disclosure','transaction'):raise ValueError('Invalid date basis')
+        if chamber and chamber not in ('House','Senate'):raise ValueError('Invalid chamber')
+        if action and action not in ('Buy','Sell','Exchange','Other'):raise ValueError('Invalid action')
+        start=iso_date(since) if since else ''
+        end=iso_date(until) if until else ''
+        if start and end and start>end:raise ValueError('Start date is after end date')
+        with self.lock:rows=self.db.execute('SELECT payload FROM trades ORDER BY disclosure_date DESC,transaction_date DESC').fetchall()
+        grouped={}
+        for row in rows:
+            trade=json.loads(row[0]);day=trade.get(date_basis+'_date','')
+            if person and person.lower() not in trade.get('politician','').lower():continue
+            if chamber and trade.get('chamber')!=chamber:continue
+            if action and trade.get('action')!=action:continue
+            if (start and day<start) or (end and day>end):continue
+            ticker_value=trade.get('ticker','');value=estimated_amount(trade)
+            if not ticker_value:continue
+            item=grouped.setdefault(ticker_value,dict(ticker=ticker_value,company='',trade_count=0,buy_count=0,sell_count=0,
+                other_count=0,buy_estimated=0.0,sell_estimated=0.0,gross_estimated=0.0,net_estimated=0.0,
+                estimated_count=0,unknown_value_count=0,politicians={},last_disclosure='',last_transaction=''))
+            item['trade_count']+=1;act=trade.get('action')
+            if act=='Buy':item['buy_count']+=1
+            elif act=='Sell':item['sell_count']+=1
+            else:item['other_count']+=1
+            if value is None:item['unknown_value_count']+=1
+            elif act in ('Buy','Sell'):
+                item['estimated_count']+=1;item['gross_estimated']+=value
+                signed=value if act=='Buy' else -value;item['net_estimated']+=signed
+                item['buy_estimated' if act=='Buy' else 'sell_estimated']+=value
+            name=str(trade.get('asset') or '').strip()
+            if name and (not item['company'] or trade.get('disclosure_date','')>=item['last_disclosure']):item['company']=name
+            item['last_disclosure']=max(item['last_disclosure'],trade.get('disclosure_date',''))
+            item['last_transaction']=max(item['last_transaction'],trade.get('transaction_date',''))
+            pol=item['politicians'].setdefault(trade.get('politician','Unknown'),dict(name=trade.get('politician','Unknown'),
+                chamber=trade.get('chamber',''),trade_count=0,buy_count=0,sell_count=0,net_estimated=0.0,gross_estimated=0.0))
+            pol['trade_count']+=1;pol['buy_count']+=act=='Buy';pol['sell_count']+=act=='Sell'
+            if value is not None and act in ('Buy','Sell'):
+                pol['gross_estimated']+=value;pol['net_estimated']+=value if act=='Buy' else -value
+        result=[]
+        for item in grouped.values():
+            people=list(item.pop('politicians').values())
+            for p in people:
+                p['net_estimated']=round(p['net_estimated'],2);p['gross_estimated']=round(p['gross_estimated'],2)
+            people.sort(key=lambda p:(abs(p['net_estimated']),p['trade_count']),reverse=True)
+            item['politician_count']=len(people);item['politician_names']=[p['name'] for p in people];item['top_politicians']=people[:8]
+            for key in ('buy_estimated','sell_estimated','gross_estimated','net_estimated'):item[key]=round(item[key],2)
+            result.append(item)
+        return result
+
+    def trades_for_people(self, names, limit=50000):
         names=list(dict.fromkeys(str(n) for n in names if n))[:900]
         if not names:return []
         marks=','.join('?' for _ in names)
         with self.lock:
-            rows=self.db.execute(f'SELECT payload FROM trades WHERE politician IN ({marks}) ORDER BY disclosure_date DESC,transaction_date DESC LIMIT ?',names+[max(1,min(5000,int(limit)))]).fetchall()
+            rows=self.db.execute(f'SELECT payload FROM trades WHERE politician IN ({marks}) ORDER BY disclosure_date DESC,transaction_date DESC LIMIT ?',names+[max(1,min(50000,int(limit)))]).fetchall()
         return [json.loads(r[0]) for r in rows]
 
     def status(self):

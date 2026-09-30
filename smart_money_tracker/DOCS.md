@@ -2,8 +2,8 @@
 
 This bundle contains:
 
-- **Market Flow Bot 0.16.3**: market flow, company valuation and the linked politician-disclosure panel in each stock detail view.
-- **Smart Money Tracker 0.2.3**: a linked Home Assistant add-on with its own disclosure database and dashboard.
+- **Market Flow Bot 0.17.1**: market flow, quieter named notifications and the low-frequency market-data bridge used by politician stock exposure.
+- **Smart Money Tracker 0.3.0**: disclosures, stock exposure and politician flow mapping in one linked add-on.
 
 ## Install locally in Home Assistant
 
@@ -33,6 +33,11 @@ No external port mapping is required. Access the dashboards through Home Assista
 - A grouped searchable dashboard: ticker, politician selector, action and disclosure date filters. One politician/disclosure row expands to all its trades and stays open during automatic refreshes.
 - Score/date/value sorting plus minimum/maximum estimated-value filters. Value filters can apply to a whole filing or to each individual transaction.
 - A clearly labelled midpoint estimate for each bounded transaction range and a summed estimate/range on every collapsed filing row. Open-ended ranges use and identify their minimum.
+- A Stock Exposure page aggregating Buy, Sell, gross and net estimated disclosed value for every collected ticker.
+- Exposure filters for sector, industry, politician, chamber, transaction type, value, participation and average politician score.
+- Per-stock drill-down with current price, valuation, nearest-expiry max pain, expiry, distance from max pain, politicians and source transactions.
+- A politician-only radial flow map grouped by sector, with disclosure-date or transaction-date periods.
+- Politician-stock prices and max pain are refreshed cache-first approximately every eight hours, independently of the normal 15-minute Market Flow loop.
 - Persistent SQLite storage, repeat-download/import deduplication, transactional report replacement, retryable errors and visible incomplete reports.
 - Existing cached records remain available if a source is down. Check the last source check and source status before treating coverage as current.
 - CSV import for additional House/Senate records. The dashboard provides the template. Dates are YYYY-MM-DD. Quote values containing commas. The entire file is validated before anything is saved.
@@ -69,6 +74,8 @@ Manual source checks are limited to once per minute. Failed/partial House report
 - Transactions can belong to a spouse, joint account or dependent; blank ownership is shown as **Not stated**.
 - Stock, option and other asset types remain visible. A ticker match for an option does not mean an outright share purchase.
 - No current portfolio or exact profit is inferred. The displayed result uses an estimated market close, and the score is a dataset tracking statistic rather than proof of skill.
+- Stock Exposure is an inferred transaction-flow view, not a verified holdings ledger. A negative net value does not establish a short position, and a positive value does not prove the stock is still held.
+- Max pain is calculated from nearest-expiry option-chain open interest. It is a reference level, not a forecast, and is unavailable for stocks without a usable cached option chain.
 - No matching record means none in the collected dataset. It does not establish absence of trading.
 - Filings with no explicit ticker, scanned pages and unsupported layouts are incomplete. Parsing is not OCR. Some legitimate non-listed investments therefore appear in the report-review count.
 - Amendments are flagged when detectable, but are not reconciled with original disclosures. Check the source PDF.
@@ -77,7 +84,7 @@ Manual source checks are limited to once per minute. Failed/partial House report
 
 ## Review and validation
 
-During this build, 21 Python regression tests passed, including two official PDF fixtures. Focused tests also covered midpoint/range totals, both value-filter modes, global score sorting, persistent expansion and the mobile Back guard. Both dashboard scripts pass JavaScript syntax checks, and DOM interaction tests cover the linked stock panel. Browser screenshot validation could not run because the browser binary is not installed in the build environment. A Home Assistant/Docker deployment and authenticated Senate fetch still need testing on your installation.
+During this build, 21 Python regression tests passed, including two official PDF fixtures. Focused tests also covered midpoint/range totals, stock aggregation, exposure filters, score enrichment, cache-first current prices, sector classification, max-pain calculations and distance, stock drill-down, persistent expansion, the mobile Back guard and the politician flow map. Both dashboard scripts pass JavaScript syntax checks. Browser screenshot validation could not run because the browser binary is not installed in the build environment. A Home Assistant/Docker deployment and authenticated Senate fetch still need testing on your installation.
 
 To roll back the Market Flow UI integration, restore/rebuild the v0.15.3 source folder while retaining the existing add-on data. Smart Money can remain separately installed. No Market Flow DB migration is introduced by this integration.
 

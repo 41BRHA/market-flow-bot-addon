@@ -1,4 +1,4 @@
-# Smart Money Tracker 0.2.3
+# Smart Money Tracker 0.3.0
 
 Politician-trade disclosures with a separate persistent store, automatic official House PTR collection, optional FMP Senate ingestion, CSV import and a searchable ingress dashboard. Designed to connect to Market Flow's stock detail panel through a read-only HTTP API.
 
@@ -29,3 +29,13 @@ House Clerk and Senate XML feeds. The dashboard translates major committees
 into short oversight descriptions such as defence, banking, energy or
 technology. Committee membership is useful context, but is not evidence that a
 member had advance knowledge of a particular trade.
+
+The Stock Exposure tab aggregates every collected ticker into estimated Buy,
+Sell, gross and net disclosed flow. It supports sector, industry, politician,
+chamber, transaction, value, participation and score filters. This is an
+inference from collected transactions rather than a verified holdings ledger.
+
+The Politician Flow Map groups those estimates by sector. Market Flow supplies
+cache-first current prices, company metadata and nearest-expiry option max pain.
+This politician-only market data is queued approximately every eight hours
+rather than joining the normal 15-minute flow cycle.

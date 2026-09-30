@@ -1,3 +1,13 @@
+# 0.3.0
+
+- Add Stock Exposure: one summarised row per ticker across collected disclosures.
+- Filter by sector, industry, politician, chamber, transaction type, value, participation and average score.
+- Show estimated Buy, Sell, gross and net disclosed flow with explicit holdings limitations.
+- Add per-stock drill-down with politicians, official roles, valuation, transactions and source links.
+- Add current price plus nearest-expiry max-pain strike, expiry and distance from price.
+- Add a sector-level Politician Flow Map with period and date-basis controls.
+- Use an eight-hour background price/option refresh for the politician universe.
+
 # 0.2.3
 
 - Sort disclosures by politician score, filing value or disclosure date.

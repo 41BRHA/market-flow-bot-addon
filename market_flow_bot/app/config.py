@@ -37,21 +37,39 @@ class Thresholds:
 @dataclass
 class AlertCfg:
     # quiet by default — only genuine, volume-backed shifts get through
-    alert_on_summary: bool = True    # periodic "into X / out of Y" digest
+    quiet_mode: bool = True          # conservative floors also apply to retained older options
+    alert_on_summary: bool = False   # optional digest; quiet mode suppresses it
     alert_on_flip: bool = True       # money reverses direction with conviction
     alert_on_strong: bool = True     # strong one-directional flow on heavy volume
-    min_flip_ratio: float = 0.40     # |flow_ratio| needed to call a flip
-    strong_ratio: float = 0.65       # |flow_ratio| needed to call it "strong"
-    min_rvol: float = 1.0            # volume must be this x its baseline to alert
-    min_density: float = 0.5         # fraction of the window that must have traded (kills thin pre-market)
+    min_flip_ratio: float = 0.55     # |flow_ratio| needed to call a flip
+    strong_ratio: float = 0.75       # |flow_ratio| needed to call it "strong"
+    min_rvol: float = 1.5            # volume must be this x its baseline to alert
+    min_density: float = 0.75        # fraction of the window that must have traded (kills thin pre-market)
+    min_breadth_pct: float = 70.0    # multi-stock sectors need this % aligned with the signal
+    max_notifications_per_hour: int = 4
     suppress_startup: bool = True    # no alerts on the first cycle after a restart
     # price-move alerts (separate from the flow signals above)
     alert_on_sector_move: bool = True   # notify when a sector's average % move crosses the threshold
-    sector_move_pct: float = 2.0        # |sector avg %| to alert
+    sector_move_pct: float = 3.0        # |sector avg %| to alert
     alert_on_stock_move: bool = True    # notify when a single stock's % move crosses the threshold
-    stock_move_pct: float = 7.0         # |stock %| to alert
+    stock_move_pct: float = 10.0        # |stock %| to alert
     move_reference: str = "prev_close"  # "prev_close" (incl. overnight gap) or "session_open"
-    move_cooldown_minutes: int = 240    # per-symbol quiet period so a big move isn't re-alerted every cycle
+    move_cooldown_minutes: int = 480    # per-symbol quiet period so a big move isn't re-alerted every cycle
+
+    def apply_quiet_floors(self) -> None:
+        """Keep upgrades quiet when Home Assistant retains older options."""
+        if not self.quiet_mode:
+            return
+        self.alert_on_summary = False
+        self.min_flip_ratio = max(self.min_flip_ratio, 0.55)
+        self.strong_ratio = max(self.strong_ratio, 0.75)
+        self.min_rvol = max(self.min_rvol, 1.5)
+        self.min_density = max(self.min_density, 0.75)
+        self.min_breadth_pct = max(self.min_breadth_pct, 70.0)
+        self.sector_move_pct = max(self.sector_move_pct, 3.0)
+        self.stock_move_pct = max(self.stock_move_pct, 10.0)
+        self.move_cooldown_minutes = max(self.move_cooldown_minutes, 480)
+        self.max_notifications_per_hour = min(max(self.max_notifications_per_hour, 1), 4)
 
 
 @dataclass
@@ -103,6 +121,8 @@ class Config:
         wb = raw.get("webull", {})
         al = raw.get("alerts", {})
         sectors = [Sector(name=s["name"], symbols=list(s.get("symbols", [])), holdings_etf=s.get("holdings_etf", "")) for s in raw.get("sectors", [])]
+        alerts = AlertCfg(**{k: al[k] for k in al if k in AlertCfg.__annotations__})
+        alerts.apply_quiet_floors()
         return cls(
             data_source=raw.get("data_source", "yahoo"),
             poll_interval_seconds=int(raw.get("poll_interval_seconds", 900)),
@@ -110,7 +130,7 @@ class Config:
             benchmark=list(raw.get("benchmark", ["SPY"])),
             sectors=sectors,
             thresholds=Thresholds(**{k: th[k] for k in th if k in Thresholds.__annotations__}),
-            alerts=AlertCfg(**{k: al[k] for k in al if k in AlertCfg.__annotations__}),
+            alerts=alerts,
             cooldown_minutes=int(raw.get("cooldown_minutes", 30)),
             summary_cooldown_minutes=int(raw.get("summary_cooldown_minutes", 60)),
             publish_sensor=bool(raw.get("publish_sensor", True)),

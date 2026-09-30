@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import deque
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,23 @@ class Cooldown:
             self._last[key] = now_ts
             return True
         return False
+
+
+class AlertBudget:
+    """Rolling global notification cap, independent of per-signal cooldowns."""
+    def __init__(self, limit: int, window_seconds: int = 3600):
+        self.limit = max(1, int(limit))
+        self.window = max(60, int(window_seconds))
+        self._sent = deque()
+
+    def ready(self, now_ts: float) -> bool:
+        cutoff = now_ts - self.window
+        while self._sent and self._sent[0] <= cutoff:
+            self._sent.popleft()
+        if len(self._sent) >= self.limit:
+            return False
+        self._sent.append(now_ts)
+        return True
 
 
 class Store:

@@ -1,3 +1,17 @@
+# 0.17.1
+
+- Add quiet notification mode: no routine summaries, stronger conviction/volume/data-density/breadth requirements, four-hour signal cooldowns, eight-hour move cooldowns and a rolling four-alert hourly cap.
+- Raise quiet-mode price thresholds to 10% for a stock and 3% for a sector.
+- Include the full company name alongside the ticker in single-stock notifications when metadata is available.
+
+# 0.17.0
+
+- Add cache-first stock-universe snapshots for the linked Smart Money exposure page.
+- Refresh politician-only prices and max pain approximately every eight hours, outside the 15-minute flow cycle.
+- Expose current price, sector/industry, valuation and nearest-expiry max-pain data through the internal link.
+- Queue company metadata sequentially to avoid a burst of Yahoo requests on first backfill.
+- Remember unsuccessful/no-options max-pain attempts for the same eight-hour window.
+
 # 0.16.3
 
 - Increased sector names, arrow flow/cash labels and end-ball values for readability.

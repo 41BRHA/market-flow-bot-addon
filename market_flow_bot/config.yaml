@@ -1,5 +1,5 @@
 name: Market Flow Bot
-version: "0.16.3"
+version: "0.17.1"
 slug: market_flow_bot
 description: Live volume-flow rotation engine — money in/out of every GICS sector (top-30 constituents each) plus AI-infra, software, metals (futures) & miners, with tunable big-shift alerts into Home Assistant.
 url: "https://github.com/your/market-flow-bot"
@@ -59,22 +59,25 @@ options:
     min_history: 30
     percentile_alert: 98.0
   alerts:
-    alert_on_summary: true
+    quiet_mode: true
+    alert_on_summary: false
     alert_on_flip: true
     alert_on_strong: true
-    min_flip_ratio: 0.40
-    strong_ratio: 0.65
-    min_rvol: 1.0
-    min_density: 0.5
+    min_flip_ratio: 0.55
+    strong_ratio: 0.75
+    min_rvol: 1.5
+    min_density: 0.75
+    min_breadth_pct: 70.0
+    max_notifications_per_hour: 4
     suppress_startup: true
     alert_on_sector_move: true
-    sector_move_pct: 2.0
+    sector_move_pct: 3.0
     alert_on_stock_move: true
-    stock_move_pct: 7.0
+    stock_move_pct: 10.0
     move_reference: prev_close
-    move_cooldown_minutes: 240
-  cooldown_minutes: 30
-  summary_cooldown_minutes: 60
+    move_cooldown_minutes: 480
+  cooldown_minutes: 240
+  summary_cooldown_minutes: 180
   publish_sensor: true
   notify:
     ha_service: "notify.adam_mobile"
@@ -113,6 +116,7 @@ schema:
     min_history: int(1,100000)
     percentile_alert: float
   alerts:
+    quiet_mode: bool
     alert_on_summary: bool
     alert_on_flip: bool
     alert_on_strong: bool
@@ -120,6 +124,8 @@ schema:
     strong_ratio: float
     min_rvol: float
     min_density: float
+    min_breadth_pct: float
+    max_notifications_per_hour: int(1,100)
     suppress_startup: bool
     alert_on_sector_move: bool
     sector_move_pct: float

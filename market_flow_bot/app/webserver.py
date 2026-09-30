@@ -15,6 +15,7 @@ import logging
 import os
 import threading
 import re
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -27,6 +28,22 @@ _LATEST_PATH = ("/data/latest.json" if os.path.isdir("/data")
 _SMART_URL = ""
 _ENGINE = None   # PeriodEngine, set by start()
 _FUNDAMENTALS = None
+
+
+def company_name(ticker: str, wait_seconds: float = 6.0) -> str:
+    """Return a cached company name, briefly allowing a queued lookup to finish."""
+    service = _FUNDAMENTALS
+    if service is None:
+        return ""
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    while True:
+        profile = service.get(ticker)
+        name = str(profile.get("name") or "").strip()
+        if name and name.upper() != ticker.upper():
+            return name
+        if time.monotonic() >= deadline or profile.get("error"):
+            return ""
+        time.sleep(0.2)
 
 
 def _parse_range(frm: str, to: str):
@@ -88,6 +105,26 @@ class _Handler(BaseHTTPRequestHandler):
                 if re.fullmatch(r"[A-Z][A-Z0-9-]{0,14}", symbol) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
                     pairs.append((symbol, day))
             return self._send(200, json.dumps(_ENGINE.trade_prices(pairs)).encode(), "application/json")
+        if path in ("/api/stock-snapshots", "/api/stock-snapshot"):
+            if _ENGINE is None:
+                return self._send(200,b'{"error":"engine not ready","stocks":{}}',"application/json")
+            q=parse_qs(parsed.query);raw=q.get("ticker") or []
+            tickers=[]
+            for value in raw[:100]:
+                symbol=value.strip().upper().replace(".","-")
+                if re.fullmatch(r"[A-Z][A-Z0-9-]{0,14}",symbol) and symbol not in tickers:tickers.append(symbol)
+            result=_ENGINE.stock_snapshots(tickers)
+            if _FUNDAMENTALS is not None:
+                details=(q.get("details") or [""])[0] in ("1","true","yes")
+                fundamentals=_FUNDAMENTALS.get_many(tickers)
+                for symbol,fund in fundamentals.items():
+                    stock=result["stocks"].setdefault(symbol,{})
+                    if fund.get("sector") and stock.get("sector")=="Unclassified":stock["sector"]=fund["sector"]
+                    stock.update(company_name=fund.get("name"),industry=fund.get("industry"),
+                                 market_cap=fund.get("market_cap"),trailing_pe=fund.get("trailing_pe"),
+                                 forward_pe=fund.get("forward_pe"),fundamentals_pending=fund.get("pending",False))
+                    if details:stock["fundamentals"]=fund
+            return self._send(200,json.dumps(result).encode(),"application/json")
         if path == "/api/fundamentals":
             ticker = (parse_qs(parsed.query).get("ticker") or [""])[0]
             result = _FUNDAMENTALS.get(ticker) if _FUNDAMENTALS is not None else {"ticker": ticker, "pending": True}
