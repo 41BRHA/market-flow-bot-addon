@@ -28,7 +28,8 @@ class FilingAlerts:
 
     def status(self):
         return {'configured':bool(SUPERVISOR_TOKEN and self.service.startswith('notify.')),
-                'service':self.service,'selected':sum(1 for x in self.store.alert_subscriptions() if x['enabled'])}
+                'service':self.service,'selected':sum(1 for x in self.store.alert_subscriptions() if x['enabled']),
+                'global':self.store.global_alert()}
 
     def _send(self,title,message):
         if not (SUPERVISOR_TOKEN and self.service.startswith('notify.')):
@@ -55,13 +56,16 @@ class FilingAlerts:
             groups[(trade.get('politician',''),trade.get('disclosure_date',''))].append(trade)
         sent=0
         for (person,day),trades in groups.items():
-            rule=self.store.matching_alert(person,day)
-            if not rule:continue
-            eligible=[t for t in trades if t.get('action') in rule['actions']]
+            rules=self.store.matching_alerts(person,day)
+            if not rules:continue
+            eligible=[];total=None
+            for rule in rules:
+                candidate=[t for t in trades if t.get('action') in rule['actions']]
+                known=[estimated_amount(t) for t in candidate if estimated_amount(t) is not None]
+                candidate_total=sum(known) if known else None
+                if candidate and (not rule['min_value'] or (candidate_total is not None and candidate_total>=rule['min_value'])):
+                    eligible=candidate;total=candidate_total;break
             if not eligible:continue
-            known=[estimated_amount(t) for t in eligible if estimated_amount(t) is not None]
-            total=sum(known) if known else None
-            if rule['min_value'] and (total is None or total<rule['min_value']):continue
             identity=alert_identity(person,day,eligible)
             if self.store.alert_delivered(identity):continue
             counts=defaultdict(int)

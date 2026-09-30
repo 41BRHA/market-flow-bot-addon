@@ -116,6 +116,12 @@ class ProfileService:
 
     def get(self,person,chamber,district=''):
         self.refresh_if_needed()
+        if chamber=='Executive' and _norm(person) in ('donaldjtrump','donaldtrump'):
+            return {'name':person,'chamber':'Executive','current':True,
+                    'title':'President of the United States · Executive Branch',
+                    'committees':[],'responsibilities':['executive policy and federal administration'],
+                    'leadership':['President of the United States'],
+                    'source_url':'https://www.oge.gov/web/oge.nsf/Officials%20Individual%20Disclosures%20Search%20Collection?OpenForm='}
         with self.lock:profiles=list(self.profiles);meta=dict(self.meta);pending=self.inflight
         candidates=[p for p in profiles if p.get('chamber')==chamber]
         exact=next((p for p in candidates if _norm(p.get('name'))==_norm(person)),None)

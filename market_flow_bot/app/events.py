@@ -80,6 +80,9 @@ def parse_feed(xml_bytes) -> list[dict]:
 
 def refresh():
     """Fetch this week + next week, merge, de-dupe, and cache."""
+    previous = load()
+    previous_actuals = {(e.get("title"), e.get("datetime_utc")): e
+                        for e in previous.get("events", []) if e.get("actual")}
     collected: list[dict] = []
     ok = False
     for url in FEED_URLS:
@@ -99,10 +102,19 @@ def refresh():
         k = (e["title"], e["datetime_utc"])
         if k in seen:
             continue
+        old = previous_actuals.get(k)
+        if old and "adp" not in str(e.get("title", "")).lower():
+            e["actual"] = old.get("actual", "")
+            if old.get("actual_at"):
+                e["actual_at"] = old["actual_at"]
+            if old.get("actual_source"):
+                e["actual_source"] = old["actual_source"]
         seen.add(k)
         evs.append(e)
     evs.sort(key=lambda e: e["datetime_utc"] or "")
-    payload = {"events": evs, "updated": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    payload = {"events": evs, "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "actual_checked": previous.get("actual_checked"),
+               "actuals_updated": previous.get("actuals_updated")}
     try:
         with open(_PATH, "w", encoding="utf-8") as f:
             json.dump(payload, f)
@@ -123,15 +135,17 @@ def enrich_actuals() -> bool:
     evs = data.get("events") or []
     if not evs:
         return False
-    if actuals.enrich(evs):
-        data["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        try:
-            with open(_PATH, "w", encoding="utf-8") as f:
-                json.dump(data, f)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("events save failed: %s", exc)
-        return True
-    return False
+    checked = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    changed = actuals.enrich(evs)
+    data["actual_checked"] = checked
+    if changed:
+        data["actuals_updated"] = checked
+    try:
+        with open(_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("events save failed: %s", exc)
+    return changed
 
 
 def load() -> dict:

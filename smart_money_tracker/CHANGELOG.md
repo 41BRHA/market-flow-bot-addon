@@ -75,3 +75,6 @@
 - Search dashboard and per-ticker HTTP API for Market Flow.
 - **0.5.4** — Expose the display timezone as a configuration dropdown and keep
   expanded Stock Exposure rows open during background refreshes.
+- **0.6.0** — Add universal minimum-filing-value alerts, estimated current
+  holdings by politician, sortable disclosure headings, autocomplete inputs,
+  and direct-download Executive Branch OGE collection including Donald Trump.

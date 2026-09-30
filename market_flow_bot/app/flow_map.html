@@ -347,7 +347,7 @@ function escHtml(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt
 /* ---- economic calendar: day navigation + importance (dot) filter ----
    EV_LEVEL is the minimum importance shown: 3 = high only, 2 = medium+high,
    1 = everything. Days are scrolled with the ‹ › arrows. */
-let EVENTS=[], EV_UPDATED=null, EV_DAYS=[], EV_DAYIDX=0, EV_LEVEL=3;
+let EVENTS=[], EV_UPDATED=null, EV_ACTUAL_CHECKED=null, EV_DAYS=[], EV_DAYIDX=0, EV_LEVEL=3;
 
 const _dayKey=d=>{const p=_parts(d,{year:'numeric',month:'2-digit',day:'2-digit'});return _part(p,'year')+'-'+_part(p,'month')+'-'+_part(p,'day');};
 const _todayKey=()=>_dayKey(Date.now());
@@ -375,7 +375,7 @@ function renderEvents(){
   if(!rows.length){
     const tier=EV_LEVEL===3?'high-impact ':EV_LEVEL===2?'medium/high ':'';
     list.innerHTML=`<div class="ev-empty">No ${tier}events this day.</div>`;
-    foot.textContent = EV_UPDATED?("updated "+fmtTime(EV_UPDATED)+" · "+APP_TZ):"";
+    foot.textContent = EV_UPDATED?("calendar updated "+fmtTime(EV_UPDATED)+(EV_ACTUAL_CHECKED?" · actuals checked "+fmtTime(EV_ACTUAL_CHECKED):"")+" · "+APP_TZ):"";
     return;
   }
   const nextIdx=(key===_todayKey())?rows.findIndex(e=>Date.parse(e.datetime_utc)>now):-1;
@@ -389,7 +389,7 @@ function renderEvents(){
       +`<div style="min-width:0;flex:1 1 auto"><div class="ev-title">${escHtml(e.title)}<span class="ev-dots l${lvl}">${'•'.repeat(lvl)}</span></div>${fap}</div>`
       +`</div>`;
   }).join("");
-  foot.textContent = EV_UPDATED ? ("forecast/previous from calendar · actual fills in after release · updated "+fmtTime(EV_UPDATED)+" · "+APP_TZ) : "";
+  foot.textContent = EV_UPDATED ? ("calendar updated "+fmtTime(EV_UPDATED)+(EV_ACTUAL_CHECKED?" · actuals checked "+fmtTime(EV_ACTUAL_CHECKED):"")+" · "+APP_TZ) : "";
 }
 
 async function loadEvents(force){
@@ -398,7 +398,7 @@ async function loadEvents(force){
   try{
     const r=await fetch('api/events'+(force?'?refresh=1':''),{cache:'no-store'}); const j=await r.json();
     const prevKey = EV_DAYS.length ? EV_DAYS[EV_DAYIDX] : null;   // keep the day the user is on
-    EVENTS=j.events||[]; EV_UPDATED=j.updated||null;
+    EVENTS=j.events||[]; EV_UPDATED=j.updated||null; EV_ACTUAL_CHECKED=j.actual_checked||null;
     EV_DAYS=[...new Set(EVENTS.filter(e=>e.datetime_utc).map(e=>_dayKey(e.datetime_utc)))].sort();
     let idx = prevKey ? EV_DAYS.indexOf(prevKey) : -1;
     if(idx<0){ const tk=_todayKey(); idx=EV_DAYS.indexOf(tk); if(idx<0) idx=EV_DAYS.findIndex(d=>d>=tk); }

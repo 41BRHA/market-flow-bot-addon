@@ -81,7 +81,7 @@ def alert_identity(politician, disclosure_date, trades):
 
 def normalise(row, source, source_id):
     sym = ticker(row.get('ticker') or row.get('symbol'))
-    if not sym:
+    if not sym and source!='oge_official':
         raise ValueError('No explicit valid ticker; company names are not guessed')
     person = str(row.get('politician') or ' '.join(filter(None, [row.get('firstName'), row.get('lastName')])) or row.get('office') or '').strip()
     if not person:
@@ -104,8 +104,8 @@ def normalise(row, source, source_id):
     owner = str(row.get('owner') or '').strip()
     owner = {'SP': 'Spouse', 'DC': 'Dependent child', 'JT': 'Joint'}.get(owner, owner or 'Not stated')
     chamber = str(row.get('chamber') or 'House')
-    if chamber not in ('House', 'Senate'):
-        raise ValueError('Chamber must be House or Senate')
+    if chamber not in ('House', 'Senate', 'Executive'):
+        raise ValueError('Branch must be House, Senate or Executive')
     record = dict(ticker=sym, politician=person, chamber=chamber, owner=owner,
         filer_status=str(row.get('filer_status') or 'Not verified'),
         action=action, transaction_type=raw_type, transaction_date=transaction,
@@ -261,6 +261,26 @@ class Store:
                                min_value=float(r['min_value']),start_date=r['start_date'],updated=r['updated']))
         return result
 
+    def global_alert(self):
+        rule=self.get_meta('global_filing_alert',{}) or {}
+        return dict(enabled=bool(rule.get('enabled',False)),
+                    actions=rule.get('actions',['Buy','Sell']),
+                    min_value=float(rule.get('min_value',1_000_000) or 0),
+                    start_date=rule.get('start_date'),updated=rule.get('updated'))
+
+    def set_global_alert(self,enabled,actions,min_value=1_000_000):
+        allowed={'Buy','Sell','Exchange','Other'}
+        actions=list(dict.fromkeys(str(a) for a in actions if str(a) in allowed))
+        if not actions:raise ValueError('Select at least one transaction type')
+        try:min_value=float(min_value or 0)
+        except (TypeError,ValueError) as exc:raise ValueError('Minimum value must be a number') from exc
+        if min_value<0 or min_value>10_000_000_000:raise ValueError('Minimum value is outside the supported range')
+        old=self.global_alert();now=utcnow()
+        start=now[:10] if enabled and not old['enabled'] else old.get('start_date') or now[:10]
+        rule=dict(enabled=bool(enabled),actions=actions,min_value=min_value,start_date=start,updated=now)
+        self.set_meta('global_filing_alert',rule)
+        return rule
+
     def set_alert_subscription(self, politician, enabled, actions, min_value=0):
         politician=' '.join(str(politician or '').split())[:160]
         if not politician:raise ValueError('Politician is required')
@@ -299,6 +319,15 @@ class Store:
         except Exception:actions=['Buy','Sell']
         return dict(politician=row['politician'],actions=actions,min_value=float(row['min_value']),start_date=row['start_date'])
 
+    def matching_alerts(self,politician,disclosure_date):
+        rules=[]
+        personal=self.matching_alert(politician,disclosure_date)
+        if personal:rules.append(personal)
+        global_rule=self.global_alert()
+        if global_rule['enabled'] and str(disclosure_date or '')>=str(global_rule.get('start_date') or ''):
+            rules.append({**global_rule,'politician':'*'})
+        return rules
+
     def alert_delivered(self, identity):
         with self.lock:return self.db.execute('SELECT 1 FROM alert_deliveries WHERE id=?',(identity,)).fetchone() is not None
 
@@ -316,7 +345,7 @@ class Store:
         complete opening positions and full/partial-sale status are unavailable.
         """
         if date_basis not in ('disclosure','transaction'):raise ValueError('Invalid date basis')
-        if chamber and chamber not in ('House','Senate'):raise ValueError('Invalid chamber')
+        if chamber and chamber not in ('House','Senate','Executive'):raise ValueError('Invalid chamber')
         if action and action not in ('Buy','Sell','Exchange','Other'):raise ValueError('Invalid action')
         start=iso_date(since) if since else ''
         end=iso_date(until) if until else ''
@@ -378,6 +407,7 @@ class Store:
             problems=[dict(r) for r in self.db.execute("SELECT id,state,error,skipped FROM reports WHERE state IN ('partial','error','unparsed') LIMIT 20")]
         return dict(house_reports=counts,trade_count=total,problems=problems,
                     house=self.get_meta('house',{}),senate=self.get_meta('senate',{'state':'not_configured'}),
+                    executive=self.get_meta('executive',{'state':'starting'}),
                     running=self.get_meta('running',False),coverage='partial',score_started_at=self.get_meta('score_started_at'),
                     note='House PTRs only within the configured disclosure window; unmatched, scanned and amended filings may be incomplete. Senate coverage is separate. Disclosed ranges are not exact trade values.')
 

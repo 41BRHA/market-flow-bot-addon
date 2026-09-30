@@ -16,6 +16,7 @@ we see a real release.
 from __future__ import annotations
 
 import csv
+import html
 import io
 import logging
 import re
@@ -29,6 +30,8 @@ UA = {"User-Agent": "Mozilla/5.0"}
 BLS_V1 = "https://api.bls.gov/publicAPI/v1/timeseries/data/{sid}"
 FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
 FED_RSS = "https://www.federalreserve.gov/feeds/press_monetary.xml"
+BEA_GDP = "https://www.bea.gov/data/gdp/gross-domestic-product"
+BEA_PCE = "https://www.bea.gov/data/income-saving/personal-income"
 
 
 # ---- source fetchers -------------------------------------------------------
@@ -68,6 +71,22 @@ def _fred_series(series_id: str):
     except Exception as exc:  # noqa: BLE001
         log.warning("FRED %s failed: %s", series_id, exc)
         return []
+
+
+def _bea_text(url: str):
+    """Read the current BEA release summary without requiring an API key."""
+    try:
+        r=requests.get(url,timeout=20,headers=UA);r.raise_for_status()
+        text=re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>"," ",r.text,flags=re.I)
+        return ' '.join(html.unescape(re.sub(r"<[^>]+>"," ",text)).split())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("BEA release page failed: %s",exc);return ''
+
+
+def _signed_percent(text, pattern):
+    m=re.search(pattern,text,re.I)
+    if not m:return None
+    value=float(m.group(2));return -value if m.group(1).lower()=='decreased' else value
 
 
 # ---- freshness gate --------------------------------------------------------
@@ -153,14 +172,21 @@ def _fred_mom(sid):
     return (s[-1][1] / s[-2][1] - 1) * 100
 
 def pce_mom():
-    v = _fred_mom("PCEPI")
+    text=_bea_text(BEA_PCE)
+    v=_signed_percent(text,r"From the preceding month, the PCE price index[^.]*?\b(increased|decreased)\s+([\d.]+)\s+percent")
+    if v is None:v = _fred_mom("PCEPI")
     return None if v is None else f"{v:+.1f}% MoM"
 
 def core_pce_mom():
-    v = _fred_mom("PCEPILFE")
+    text=_bea_text(BEA_PCE)
+    v=_signed_percent(text,r"Excluding food and energy, the PCE price index[^.]*?\b(increased|decreased)\s+([\d.]+)\s+percent")
+    if v is None:v = _fred_mom("PCEPILFE")
     return None if v is None else f"{v:+.1f}% MoM"
 
 def gdp():
+    text=_bea_text(BEA_GDP)
+    v=_signed_percent(text,r"real gross domestic product[^.]*?\b(increased|decreased)\s+at an annual rate of\s+([\d.]+)\s+percent")
+    if v is not None:return f"{v:+.1f}% (annualised)"
     s = _fred_series("A191RL1Q225SBEA")             # real GDP, annualised QoQ %
     if not s or not _fresh_fred(s, QUARTERLY_MAX_DAYS):
         return None
@@ -172,11 +198,11 @@ MATCHERS = [
     (lambda t: "core cpi" in t, core_cpi_mom),
     (lambda t: "cpi" in t and ("y/y" in t or "yoy" in t), cpi_yoy),
     (lambda t: "cpi" in t, cpi_mom),
-    (lambda t: any(k in t for k in ("non-farm", "nonfarm", "non farm", "payroll")), nfp),
+    (lambda t: "adp" not in t and any(k in t for k in ("non-farm", "nonfarm", "non farm", "payroll")), nfp),
     (lambda t: any(k in t for k in ("fomc", "federal funds", "rate decision", "interest rate")), fomc_rate),
     (lambda t: "core pce" in t, core_pce_mom),
     (lambda t: "pce" in t, pce_mom),
-    (lambda t: "gdp" in t, gdp),
+    (lambda t: "gdp" in t and "price" not in t, gdp),
 ]
 
 
@@ -210,6 +236,7 @@ def enrich(events: list[dict], within_hours: float = 6.0) -> bool:
             if val:
                 ev["actual"] = val
                 ev["actual_at"] = now.isoformat(timespec="seconds")
+                ev["actual_source"] = "official government release"
                 changed = True
                 log.info("actual filled: %s = %s", ev["title"], val)
     return changed

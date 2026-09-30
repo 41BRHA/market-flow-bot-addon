@@ -14,6 +14,37 @@ from .profiles import ProfileService
 from .sync import Collector
 from .alerts import FilingAlerts
 from .investors import InvestorStore,InvestorCollector
+from .executive import ExecutiveCollector
+
+
+def estimate_holdings(history):
+    """Reconstruct estimated remaining shares from priced disclosure midpoints."""
+    positions={}
+    for trade in sorted(history,key=lambda t:(t.get('transaction_date',''),t.get('disclosure_date',''),t.get('id',''))):
+        symbol=trade.get('ticker','');action=trade.get('action');value=estimated_amount(trade)
+        if not symbol or action not in ('Buy','Sell'):continue
+        pos=positions.setdefault(symbol,dict(ticker=symbol,company=trade.get('asset') or '',estimated_shares=0.0,
+            buy_value=0.0,sell_value=0.0,buy_count=0,sell_count=0,priced_trades=0,unpriced_trades=0,
+            unknown_opening=False,last_transaction='',latest_price=trade.get('current_price')))
+        px=trade.get('estimated_price')
+        if value is None or not isinstance(px,(int,float)) or px<=0:pos['unpriced_trades']+=1
+        else:
+            shares=value/px;pos['priced_trades']+=1
+            if action=='Buy':pos['estimated_shares']+=shares;pos['buy_value']+=value;pos['buy_count']+=1
+            else:
+                if shares>pos['estimated_shares']:pos['unknown_opening']=True
+                pos['estimated_shares']=max(0.0,pos['estimated_shares']-shares);pos['sell_value']+=value;pos['sell_count']+=1
+        pos['last_transaction']=max(pos['last_transaction'],trade.get('transaction_date',''))
+        if isinstance(trade.get('current_price'),(int,float)):pos['latest_price']=trade['current_price']
+    rows=[]
+    for pos in positions.values():
+        pos['estimated_shares']=round(pos['estimated_shares'],4)
+        pos['estimated_current_value']=round(pos['estimated_shares']*pos['latest_price'],2) if isinstance(pos.get('latest_price'),(int,float)) else None
+        pos['net_disclosed_value']=round(pos['buy_value']-pos['sell_value'],2)
+        pos['status']='Likely held' if pos['estimated_shares']>0 else ('Unknown opening balance' if pos['unknown_opening'] else 'Sold / closed')
+        pos['confidence']='Low' if pos['unknown_opening'] or pos['unpriced_trades'] else 'Medium'
+        rows.append(pos)
+    return rows
 
 
 def start_stock_refresh(store,prices,interval=8*3600):
@@ -28,7 +59,7 @@ def start_stock_refresh(store,prices,interval=8*3600):
     threading.Thread(target=loop,daemon=True).start()
 
 
-def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors=None,investor_collector=None,display_timezone='Europe/London'):
+def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors=None,investor_collector=None,executive_collector=None,display_timezone='Europe/London'):
     class Handler(BaseHTTPRequestHandler):
         def send(self,code,obj,ctype='application/json'):
             body=obj if isinstance(obj,bytes) else json.dumps(obj,allow_nan=False).encode()
@@ -57,7 +88,27 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                         people.append({**person,'enabled':bool(rule.get('enabled',False)),
                             'actions':rule.get('actions',['Buy','Sell']),'min_value':rule.get('min_value',0),
                             'alert_start_date':rule.get('start_date')})
-                    return self.send(200,{'people':people,'status':alerts.status() if alerts else {'configured':False,'selected':0}})
+                    return self.send(200,{'people':people,'global':store.global_alert(),
+                        'status':alerts.status() if alerts else {'configured':False,'selected':0}})
+                if p.path=='/api/holdings':
+                    person=' '.join(q.get('person','').split())
+                    if not person:raise ValueError('Choose a politician')
+                    # Use the complete collected history for this person.
+                    history=store.trades_for_people([person])
+                    enriched=prices.enrich(history,cache_ttl=8*3600) if prices is not None else history
+                    rows=estimate_holdings(enriched)
+                    state=q.get('state','held')
+                    if state=='held':rows=[x for x in rows if x['estimated_shares']>0]
+                    elif state=='closed':rows=[x for x in rows if x['estimated_shares']==0]
+                    elif state!='all':raise ValueError('Invalid holding status')
+                    sort=q.get('sort','value_desc')
+                    if sort=='value_desc':rows.sort(key=lambda x:(x['estimated_current_value'] is not None,x['estimated_current_value'] or 0),reverse=True)
+                    elif sort=='ticker':rows.sort(key=lambda x:x['ticker'])
+                    elif sort=='recent':rows.sort(key=lambda x:x['last_transaction'],reverse=True)
+                    else:raise ValueError('Invalid holdings sort')
+                    return self.send(200,{'person':person,'holdings':rows,'total':len(rows),
+                        'estimated_total_value':round(sum(x['estimated_current_value'] or 0 for x in rows),2),
+                        'note':'Estimated from collected range midpoints and Market Flow closing prices; opening balances and exact quantities may be unknown.'})
                 if p.path=='/api/stocks':
                     rows=store.stock_exposure(q.get('person',''),q.get('chamber',''),q.get('action',''),
                         q.get('since',''),q.get('until',''),q.get('date_basis','disclosure'))
@@ -123,6 +174,10 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                     if q.get('grouped') in ('1','true','yes'):
                         groups=store.disclosures(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),
                                                 q.get('min_value',''),q.get('max_value',''),q.get('value_scope','filing'))
+                        branch=q.get('chamber','')
+                        if branch:
+                            if branch not in ('House','Senate','Executive'):raise ValueError('Invalid branch')
+                            groups=[g for g in groups if g.get('chamber')==branch]
                         people=list(dict.fromkeys(g['politician'] for g in groups))
                         history=store.trades_for_people(people)
                         enriched=(prices.enrich_cached(history) if bridge else prices.enrich(history)) if prices is not None else history
@@ -148,6 +203,16 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                             groups.sort(key=lambda g:(g.get('estimated_value') is None,g.get('estimated_value') or 0,g['disclosure_date']))
                         elif sort=='recent':
                             groups.sort(key=lambda g:(g['disclosure_date'],g['politician'].lower()),reverse=True)
+                        elif sort=='oldest':
+                            groups.sort(key=lambda g:(g['disclosure_date'],g['politician'].lower()))
+                        elif sort=='name':
+                            groups.sort(key=lambda g:(g['politician'].lower(),g['disclosure_date']))
+                        elif sort=='name_desc':
+                            groups.sort(key=lambda g:(g['politician'].lower(),g['disclosure_date']),reverse=True)
+                        elif sort=='trades_desc':
+                            groups.sort(key=lambda g:(g['trade_count'],g['disclosure_date']),reverse=True)
+                        elif sort=='trades_asc':
+                            groups.sort(key=lambda g:(g['trade_count'],g['disclosure_date']))
                         else:
                             raise ValueError('Invalid sort order')
                         limit=max(1,min(50,int(q.get('limit',25))));offset=max(0,min(100000,int(q.get('offset',0))))
@@ -173,7 +238,13 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                 if length<0 or length>2_000_000: return self.send(413,{'error':'Maximum body is 2 MB'})
                 content=self.rfile.read(length)
                 path=urlparse(self.path).path
-                if path=='/api/refresh': collector.request();return self.send(202,{'queued':True})
+                if path=='/api/refresh':
+                    collector.request()
+                    if executive_collector:executive_collector.request()
+                    return self.send(202,{'queued':True})
+                if path=='/api/executive/refresh':
+                    if executive_collector:executive_collector.request()
+                    return self.send(202,{'queued':True})
                 if path=='/api/investors/refresh': investor_collector.request();return self.send(202,{'queued':True})
                 if path=='/api/investor-alerts':
                     payload=json.loads(content.decode('utf-8') or '{}')
@@ -185,6 +256,11 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                     if not isinstance(payload.get('enabled'),bool):raise ValueError('Enabled must be true or false')
                     rule=store.set_alert_subscription(payload.get('politician'),payload['enabled'],
                                                        payload.get('actions') or [],payload.get('min_value',0))
+                    return self.send(200,{'saved':rule,'status':alerts.status() if alerts else {'configured':False}})
+                if path=='/api/alerts/global':
+                    payload=json.loads(content.decode('utf-8') or '{}')
+                    if not isinstance(payload.get('enabled'),bool):raise ValueError('Enabled must be true or false')
+                    rule=store.set_global_alert(payload['enabled'],payload.get('actions') or [],payload.get('min_value',1_000_000))
                     return self.send(200,{'saved':rule,'status':alerts.status() if alerts else {'configured':False}})
                 if path=='/api/alerts/test':
                     payload=json.loads(content.decode('utf-8') or '{}')
@@ -215,11 +291,12 @@ def run():
     store=Store(str(base/'disclosures.db'))
     alerts=FilingAlerts(store,options.get('notify_service','notify.notify'))
     collector=Collector(store,options,alerts);collector.start()
+    executive_collector=ExecutiveCollector(store,alerts,options.get('executive_enabled',True),options.get('refresh_hours',6));executive_collector.start()
     investors=InvestorStore(str(base/'institutional.db'))
     investor_collector=InvestorCollector(investors,options.get('sec_user_agent',''),alerts);investor_collector.start()
     prices=PriceBridge(options.get('market_flow_url','http://local-market-flow-bot:8099'))
     start_stock_refresh(store,prices)
     profiles=ProfileService(str(base/'politician_profiles.json'))
-    ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices,profiles,alerts,investors,investor_collector,display_timezone)).serve_forever()
+    ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices,profiles,alerts,investors,investor_collector,executive_collector,display_timezone)).serve_forever()
 
 if __name__=='__main__': run()

@@ -1,5 +1,5 @@
 name: Smart Money Tracker
-version: "0.5.4"
+version: "0.6.0"
 slug: smart_money_tracker
 description: Politician disclosures, stock exposure and political-flow mapping with Market Flow integration.
 arch: [amd64, aarch64]
@@ -13,6 +13,7 @@ panel_title: Politician Trades
 panel_icon: mdi:account-tie
 options:
   house_enabled: true
+  executive_enabled: true
   lookback_days: 365
   refresh_hours: 6
   reports_per_cycle: 30
@@ -24,6 +25,7 @@ options:
   display_timezone: "Europe/London"
 schema:
   house_enabled: bool
+  executive_enabled: bool
   lookback_days: int(7,1825)
   refresh_hours: int(1,48)
   reports_per_cycle: int(1,100)

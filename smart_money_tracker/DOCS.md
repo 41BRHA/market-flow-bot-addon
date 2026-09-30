@@ -70,6 +70,7 @@ CSV import works without that service. Imported records stay labelled `csv_impor
 | notify_service | notify.adam_mobile | Home Assistant service for selected filing alerts |
 | sec_user_agent | blank | Descriptive SEC request identity with contact email; 13F collection remains paused until set |
 | display_timezone | Europe/London | IANA timezone used for displayed timestamps; UTC remains the internal storage format |
+| executive_enabled | true | Collect directly downloadable OGE executive disclosures, including presidential 278-T reports |
 
 Manual source checks are limited to once per minute. Failed/partial House reports retry after one day; fully parsed reports are rechecked after seven days as the backlog allows. A restart resumes the same database. Data is in the new add-on's `/data/disclosures.db`, independent of Market Flow's databases.
 
