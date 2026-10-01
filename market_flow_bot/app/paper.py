@@ -15,6 +15,12 @@ DEFAULT_RULES = {
     "buy_score": 80.0,
     "score_exit": 75.0,
     "position_size": 3000.0,
+    "extended_hours_position_size": 500.0,
+    "confirm_regular_scans": 2,
+    "confirm_extended_scans": 3,
+    "pending_cancel_score": 75.0,
+    "confirmation_min_rvol": 1.5,
+    "max_pending_price_rise_pct": 3.0,
     "max_positions": 20,
     "targets": [5.0, 12.5, 20.0],
     "target_fractions": [0.333333, 0.333333, 0.333334],
@@ -62,6 +68,11 @@ class PaperLedger:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, account TEXT NOT NULL,
                 ticker TEXT, side TEXT NOT NULL, shares REAL, price REAL, score REAL, reason TEXT NOT NULL,
                 realised REAL DEFAULT 0);
+              CREATE TABLE IF NOT EXISTS paper_pending(
+                ticker TEXT PRIMARY KEY, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+                first_price REAL NOT NULL, last_price REAL NOT NULL, score REAL NOT NULL,
+                rvol REAL NOT NULL, confirmations INTEGER NOT NULL, required INTEGER NOT NULL,
+                session TEXT NOT NULL, allocation REAL NOT NULL);
               CREATE TABLE IF NOT EXISTS paper_meta(key TEXT PRIMARY KEY, payload TEXT NOT NULL);
             """)
             for account in ("auto", "manual"):
@@ -81,10 +92,14 @@ class PaperLedger:
         old = self.rules(account)
         allowed = set(DEFAULT_RULES)
         rules = {**old, **{k: payload[k] for k in payload if k in allowed}}
-        for key in ("starting_cash", "buy_score", "score_exit", "position_size", "stop_loss_pct",
+        for key in ("starting_cash", "buy_score", "score_exit", "position_size",
+                    "extended_hours_position_size", "stop_loss_pct",
+                    "pending_cancel_score", "confirmation_min_rvol", "max_pending_price_rise_pct",
                     "trailing_stop_pct", "max_holding_days", "reentry_cooldown_hours", "avoid_earnings_days"):
             rules[key] = _number(rules[key], key)
         rules["max_positions"] = int(_number(rules["max_positions"], "max_positions", 1, 1000))
+        rules["confirm_regular_scans"] = int(_number(rules["confirm_regular_scans"], "confirm_regular_scans", 1, 100))
+        rules["confirm_extended_scans"] = int(_number(rules["confirm_extended_scans"], "confirm_extended_scans", 1, 100))
         rules["enabled"] = bool(rules["enabled"])
         rules["allow_overnight"] = bool(rules["allow_overnight"])
         targets = list(rules.get("targets") or [])
@@ -139,8 +154,17 @@ class PaperLedger:
         return {"ok": True, "realised": round(realised, 2)}
 
     def manual_trade(self, payload):
-        return self._trade("manual", payload.get("ticker"), payload.get("side"), payload.get("shares"),
-                           payload.get("price"), payload.get("score"), "Manual paper order")
+        side = str(payload.get("side") or "").strip().lower()
+        price = _number(payload.get("price"), "price", 0.000001)
+        shares = payload.get("shares")
+        amount = payload.get("amount")
+        # Buying by cash value is friendlier than making the user calculate
+        # fractional shares. Explicit shares remain supported for both sides.
+        if side == "buy" and amount not in (None, ""):
+            amount = _number(amount, "spend", 0.01)
+            shares = amount / price
+        return self._trade("manual", payload.get("ticker"), side, shares,
+                           price, payload.get("score"), "Manual paper order")
 
     def process(self, rows, session=None):
         """Apply automatic rules to the latest complete score snapshot."""
@@ -188,25 +212,73 @@ class PaperLedger:
         with self.lock:
             count=self.db.execute("SELECT count(*) FROM paper_positions WHERE account='auto'").fetchone()[0]
             cash=float(self.db.execute("SELECT cash FROM paper_cash WHERE account='auto'").fetchone()[0])
-        if session not in (None, "regular"):
+        # When overnight positions are allowed, a qualifying pre/post-market
+        # signal should be paper-bought at the same cached price that produced
+        # the alert. Previously every non-regular-session candidate was silently
+        # skipped, even though the UI rule explicitly allowed overnight holding.
+        if session not in (None, "regular") and not rules["allow_overnight"]:
             return
+        current_session = session or "regular"
+        allocation = (rules["position_size"] if current_session == "regular"
+                      else rules["extended_hours_position_size"])
+        required = (rules["confirm_regular_scans"] if current_session == "regular"
+                    else rules["confirm_extended_scans"])
         for row in rows:
             earnings_days = row.get("earnings_days")
             if (rules["avoid_earnings_days"] and isinstance(earnings_days,(int,float))
                     and 0 <= earnings_days <= rules["avoid_earnings_days"]):
                 continue
-            if count>=rules["max_positions"] or cash<rules["position_size"]:break
-            if float(row.get("score") or 0)<rules["buy_score"] or float(row.get("price") or 0)<=0:continue
+            ticker = str(row.get("ticker") or "").upper()
+            score = float(row.get("score") or 0)
+            price = float(row.get("price") or 0)
+            rvol = float(row.get("rvol") or 0)
+            if not ticker or price <= 0:
+                continue
             with self.lock:
-                exists=self.db.execute("SELECT 1 FROM paper_positions WHERE account='auto' AND ticker=?",(row["ticker"],)).fetchone()
-                last=self.db.execute("SELECT ts FROM paper_events WHERE account='auto' AND ticker=? AND side='sell' ORDER BY id DESC LIMIT 1",(row["ticker"],)).fetchone()
-            if exists:continue
+                exists=self.db.execute("SELECT 1 FROM paper_positions WHERE account='auto' AND ticker=?",(ticker,)).fetchone()
+                last=self.db.execute("SELECT ts FROM paper_events WHERE account='auto' AND ticker=? AND side='sell' ORDER BY id DESC LIMIT 1",(ticker,)).fetchone()
+                pending=self.db.execute("SELECT * FROM paper_pending WHERE ticker=?",(ticker,)).fetchone()
+            if exists:
+                with self.lock, self.db:
+                    self.db.execute("DELETE FROM paper_pending WHERE ticker=?", (ticker,))
+                continue
             if last:
                 age=(datetime.now(timezone.utc)-datetime.fromisoformat(last[0])).total_seconds()/3600
-                if age<rules["reentry_cooldown_hours"]:continue
-            price=float(row["price"]); amount=min(cash,rules["position_size"])
-            self._trade("auto",row["ticker"],"buy",amount/price,price,row.get("score"),"Score reached automatic buy threshold")
-            cash-=amount;count+=1
+                if age<rules["reentry_cooldown_hours"]:
+                    continue
+            if pending:
+                rise = (price / float(pending["first_price"]) - 1) * 100
+                if score < rules["pending_cancel_score"] or rise > rules["max_pending_price_rise_pct"]:
+                    with self.lock, self.db:
+                        self.db.execute("DELETE FROM paper_pending WHERE ticker=?", (ticker,))
+                    continue
+                confirmations = int(pending["confirmations"])
+                if score >= rules["buy_score"] and rvol >= rules["confirmation_min_rvol"]:
+                    confirmations += 1
+                else:
+                    confirmations = 0
+                with self.lock, self.db:
+                    self.db.execute("UPDATE paper_pending SET last_seen=?,last_price=?,score=?,rvol=?,confirmations=? WHERE ticker=?",
+                                    (_now(),price,score,rvol,confirmations,ticker))
+                pending_required = int(pending["required"])
+                pending_allocation = float(pending["allocation"])
+                if confirmations < pending_required:
+                    continue
+                if count >= rules["max_positions"] or cash < pending_allocation:
+                    continue
+                amount = min(cash, pending_allocation)
+                hours = "regular hours" if pending["session"] == "regular" else "extended hours"
+                self._trade("auto",ticker,"buy",amount/price,price,score,
+                            f"Confirmed for {confirmations} scans ({hours})")
+                with self.lock, self.db:
+                    self.db.execute("DELETE FROM paper_pending WHERE ticker=?", (ticker,))
+                cash-=amount;count+=1
+                continue
+            if score < rules["buy_score"] or rvol < rules["confirmation_min_rvol"]:
+                continue
+            with self.lock, self.db:
+                self.db.execute("INSERT OR REPLACE INTO paper_pending VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                                (ticker,_now(),_now(),price,price,score,rvol,1,required,current_session,allocation))
 
     def snapshot(self, account, prices=None):
         self._account(account); prices=prices or {}
@@ -215,6 +287,8 @@ class PaperLedger:
             cash=float(self.db.execute("SELECT cash FROM paper_cash WHERE account=?",(account,)).fetchone()[0])
             events=[dict(x) for x in self.db.execute("SELECT * FROM paper_events WHERE account=? ORDER BY id DESC LIMIT 300",(account,))]
             benchmark_row=self.db.execute("SELECT payload FROM paper_meta WHERE key='spy_benchmark'").fetchone()
+            pending=([dict(x) for x in self.db.execute("SELECT * FROM paper_pending ORDER BY score DESC")]
+                     if account == "auto" else [])
         unrealised=0.0; market_value=0.0
         for pos in positions:
             quote=prices.get(pos["ticker"],{}); current=float(quote.get("price") or pos["avg_price"])
@@ -230,7 +304,7 @@ class PaperLedger:
         benchmark=json.loads(benchmark_row[0]) if benchmark_row else {}
         benchmark_return=((float(benchmark.get("current"))/float(benchmark.get("start"))-1)*100
                           if benchmark.get("start") and benchmark.get("current") else None)
-        return {"account":account,"rules":self.rules(account),"cash":round(cash,2),"positions":positions,
+        return {"account":account,"rules":self.rules(account),"cash":round(cash,2),"positions":positions,"pending":pending,
                 "events":events,"market_value":round(market_value,2),"equity":round(cash+market_value,2),
                 "unrealised":round(unrealised,2),"realised":round(realised,2),
                 "win_rate":round(100*sum(float(e["realised"] or 0)>0 for e in exits)/len(exits),1) if exits else None,

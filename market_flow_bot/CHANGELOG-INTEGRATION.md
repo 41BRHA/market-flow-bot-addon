@@ -69,6 +69,19 @@ Adds a politician-disclosure section to the selected stock's detail panel, readi
   every cycle and broad names every fourth cycle while cached bars remain usable.
 - Keeps activity scores available outside the regular session using the last
   completed comparable session.
+## 0.20.2
+
+- Added persistent pending-buy confirmation to Mock 1: two qualifying scans in regular hours and three in pre/after-hours by default.
+- Pending candidates must retain the configured score and relative-volume requirement.
+- Pending entries cancel when score falls below 75 or price rises more than 3% before entry.
+- Added an on-screen pending-candidate table and editable confirmation rules.
+
+## 0.20.1
+
+- Fixed Mock 1 silently skipping 80+ activity signals outside the regular US session when overnight positions are allowed.
+- Automatic buys default to $500 in pre-market/after-hours and $3,000 in regular hours; both amounts are editable on screen.
+- Mock 2 manual buys now accept a dollar spend amount (default $3,000) and calculate fractional shares automatically; manual sells still use shares.
+
 ## 0.20.0
 
 - Economic-calendar actual values are retried for eight days instead of only six hours.
