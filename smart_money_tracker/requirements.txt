@@ -1,2 +1,3 @@
 pdfplumber==0.11.7
+requests>=2.31
 tzdata>=2025.2

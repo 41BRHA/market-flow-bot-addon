@@ -78,3 +78,7 @@
 - **0.6.0** — Add universal minimum-filing-value alerts, estimated current
   holdings by politician, sortable disclosure headings, autocomplete inputs,
   and direct-download Executive Branch OGE collection including Donald Trump.
+# 0.6.1
+
+- Fix add-on startup after adding the Executive/OGE collector by explicitly
+  installing its `requests` HTTP dependency.
