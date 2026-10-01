@@ -69,3 +69,9 @@ Adds a politician-disclosure section to the selected stock's detail panel, readi
   every cycle and broad names every fourth cycle while cached bars remain usable.
 - Keeps activity scores available outside the regular session using the last
   completed comparable session.
+## 0.20.0
+
+- Economic-calendar actual values are retried for eight days instead of only six hours.
+- Manual refresh now revisits yesterday's releases and records calendar-source errors.
+- Added calendar update diagnostics to the API and visible calendar footer.
+- Paper accounts now show planned value per purchase and maximum planned allocation.

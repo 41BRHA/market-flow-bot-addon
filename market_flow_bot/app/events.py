@@ -95,6 +95,9 @@ def refresh():
             log.warning("events feed %s failed: %s", url.rsplit("/", 1)[-1], exc)
     if not ok:
         log.warning("events refresh failed: no feed reachable; keeping last cache")
+        previous["last_refresh_error"] = "No calendar feed was reachable"
+        previous["last_refresh_attempt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _save(previous)
         return None
     # de-dupe on (title, datetime) and sort chronologically
     seen, evs = set(), []
@@ -114,12 +117,10 @@ def refresh():
     evs.sort(key=lambda e: e["datetime_utc"] or "")
     payload = {"events": evs, "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "actual_checked": previous.get("actual_checked"),
-               "actuals_updated": previous.get("actuals_updated")}
-    try:
-        with open(_PATH, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("events save failed: %s", exc)
+               "actuals_updated": previous.get("actuals_updated"),
+               "last_refresh_attempt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "last_refresh_error": None}
+    _save(payload)
     by_lvl = {3: 0, 2: 0, 1: 0}
     for e in evs:
         by_lvl[e["level"]] = by_lvl.get(e["level"], 0) + 1
@@ -140,12 +141,21 @@ def enrich_actuals() -> bool:
     data["actual_checked"] = checked
     if changed:
         data["actuals_updated"] = checked
+    data["actual_window_hours"] = 24 * 8
+    _save(data)
+    return changed
+
+
+def _save(data: dict) -> None:
     try:
-        with open(_PATH, "w", encoding="utf-8") as f:
+        tmp = _PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, _PATH)
     except Exception as exc:  # noqa: BLE001
         log.warning("events save failed: %s", exc)
-    return changed
 
 
 def load() -> dict:

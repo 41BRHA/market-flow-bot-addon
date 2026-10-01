@@ -89,3 +89,11 @@
   users receive a new-data notice and refresh it manually.
 - Adds estimated weighted buy price, current return and unrealised gain/loss to
   Current Holdings with matching sort options and confidence warnings.
+## 0.8.0
+
+- Restored Donald J. Trump / Executive OGE discovery through OGE's current public JSON collection endpoint.
+- Added OCR-tolerant 278-T parsing and exact issuer-to-ticker aliases for supported listed equities.
+- Added an Executive / OGE shortcut and truthful document/trade counts in collection status.
+- Made disclosure, current-holdings and 13F column headings sort immediately with direction toggles.
+- Added live 13F issuer/CUSIP search and kept data views stable until a user refreshes them.
+- Removed the 30-second disclosure redraw that could close expanded filings.

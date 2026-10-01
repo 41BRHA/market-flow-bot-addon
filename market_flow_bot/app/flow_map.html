@@ -412,7 +412,7 @@ document.getElementById('paperAccount').onchange=loadPaper;document.getElementBy
 document.getElementById('placeOrder').onclick=async()=>{const payload={ticker:document.getElementById('orderTicker').value,side:document.getElementById('orderSide').value,shares:document.getElementById('orderShares').value,price:document.getElementById('orderPrice').value};const r=await fetch('api/paper/order',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('orderMessage').textContent=r.ok?'Mock order completed':j.error||'Order failed';if(r.ok)loadPaper()};
 
 const loadPaperCore=loadPaper;
-loadPaper=async function(){await loadPaperCore();try{const account=document.getElementById('paperAccount').value,r=await fetch('api/paper?account='+account,{cache:'no-store'}),j=await r.json(),rr=j.rules||{};document.getElementById('paperSummary').insertAdjacentHTML('beforeend',`<span>Max realised drawdown<br><b class="negative">${paperMoney(j.max_realised_drawdown)}</b></span><span>SPY since tracking<br><b class="${Number(j.spy_return_pct)>=0?'positive':'negative'}">${j.spy_return_pct==null?'Waiting':(j.spy_return_pct>=0?'+':'')+j.spy_return_pct+'%'}</b></span>`);document.getElementById('paperExtraRules').innerHTML=`<label>Maximum holding days (0 = off)<input id="ruleMaxDays" type="number" min="0" value="${rr.max_holding_days||0}"></label><label>Days to avoid before earnings (when available)<input id="ruleEarnings" type="number" min="0" value="${rr.avoid_earnings_days||0}"></label><label><input id="ruleOvernight" type="checkbox" ${rr.allow_overnight?'checked':''}> Allow overnight positions</label><div class="activity-detail">Rules are evaluated only from cached Market Flow data. Earnings avoidance activates when the data feed supplies a confirmed earnings date.</div>`}catch(e){}};
+loadPaper=async function(){await loadPaperCore();try{const account=document.getElementById('paperAccount').value,r=await fetch('api/paper?account='+account,{cache:'no-store'}),j=await r.json(),rr=j.rules||{},planned=Number(rr.position_size||0)*Number(rr.max_positions||0);document.getElementById('paperSummary').insertAdjacentHTML('beforeend',`<span>Planned per buy<br><b>${paperMoney(rr.position_size)}</b></span><span>Maximum planned allocation<br><b>${paperMoney(planned)}</b></span><span>Max realised drawdown<br><b class="negative">${paperMoney(j.max_realised_drawdown)}</b></span><span>SPY since tracking<br><b class="${Number(j.spy_return_pct)>=0?'positive':'negative'}">${j.spy_return_pct==null?'Waiting':(j.spy_return_pct>=0?'+':'')+j.spy_return_pct+'%'}</b></span>`);document.getElementById('paperExtraRules').innerHTML=`<label>Maximum holding days (0 = off)<input id="ruleMaxDays" type="number" min="0" value="${rr.max_holding_days||0}"></label><label>Days to avoid before earnings (when available)<input id="ruleEarnings" type="number" min="0" value="${rr.avoid_earnings_days||0}"></label><label><input id="ruleOvernight" type="checkbox" ${rr.allow_overnight?'checked':''}> Allow overnight positions</label><div class="activity-detail">Rules are evaluated only from cached Market Flow data. Earnings avoidance activates when the data feed supplies a confirmed earnings date.</div>`}catch(e){}};
 savePaperRules=async function(){const payload={account:document.getElementById('paperAccount').value,enabled:document.getElementById('ruleEnabled').checked,buy_score:document.getElementById('ruleBuy').value,score_exit:document.getElementById('ruleExit').value,position_size:document.getElementById('ruleSize').value,max_positions:document.getElementById('ruleMax').value,targets:document.getElementById('ruleTargets').value.split(',').map(Number),target_fractions:document.getElementById('ruleFractions').value.split(',').map(x=>Number(x)/100),stop_loss_pct:document.getElementById('ruleStop').value,trailing_stop_pct:document.getElementById('ruleTrail').value,reentry_cooldown_hours:document.getElementById('ruleCooldown').value,max_holding_days:document.getElementById('ruleMaxDays').value,avoid_earnings_days:document.getElementById('ruleEarnings').value,allow_overnight:document.getElementById('ruleOvernight').checked};const r=await fetch('api/paper/rules',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('ruleMessage').textContent=r.ok?'Saved':j.error||'Save failed';if(r.ok)loadPaper()};
 document.getElementById('paperAccount').onchange=loadPaper;document.getElementById('paperRefresh').onclick=loadPaper;
 
@@ -515,7 +515,7 @@ function escHtml(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt
 /* ---- economic calendar: day navigation + importance (dot) filter ----
    EV_LEVEL is the minimum importance shown: 3 = high only, 2 = medium+high,
    1 = everything. Days are scrolled with the ‹ › arrows. */
-let EVENTS=[], EV_UPDATED=null, EV_ACTUAL_CHECKED=null, EV_DAYS=[], EV_DAYIDX=0, EV_LEVEL=3;
+let EVENTS=[], EV_UPDATED=null, EV_ACTUAL_CHECKED=null, EV_DIAGNOSTICS={}, EV_DAYS=[], EV_DAYIDX=0, EV_LEVEL=3;
 
 const _dayKey=d=>{const p=_parts(d,{year:'numeric',month:'2-digit',day:'2-digit'});return _part(p,'year')+'-'+_part(p,'month')+'-'+_part(p,'day');};
 const _todayKey=()=>_dayKey(Date.now());
@@ -543,7 +543,7 @@ function renderEvents(){
   if(!rows.length){
     const tier=EV_LEVEL===3?'high-impact ':EV_LEVEL===2?'medium/high ':'';
     list.innerHTML=`<div class="ev-empty">No ${tier}events this day.</div>`;
-    foot.textContent = EV_UPDATED?("calendar updated "+fmtTime(EV_UPDATED)+(EV_ACTUAL_CHECKED?" · actuals checked "+fmtTime(EV_ACTUAL_CHECKED):"")+" · "+APP_TZ):"";
+    foot.textContent = EV_UPDATED?("calendar updated "+fmtTime(EV_UPDATED)+(EV_ACTUAL_CHECKED?" · actuals checked "+fmtTime(EV_ACTUAL_CHECKED):"")+(EV_DIAGNOSTICS.last_error?" · ERROR: "+EV_DIAGNOSTICS.last_error:"")+" · "+APP_TZ):"";
     return;
   }
   const nextIdx=(key===_todayKey())?rows.findIndex(e=>Date.parse(e.datetime_utc)>now):-1;
@@ -557,7 +557,7 @@ function renderEvents(){
       +`<div style="min-width:0;flex:1 1 auto"><div class="ev-title">${escHtml(e.title)}<span class="ev-dots l${lvl}">${'•'.repeat(lvl)}</span></div>${fap}</div>`
       +`</div>`;
   }).join("");
-  foot.textContent = EV_UPDATED ? ("calendar updated "+fmtTime(EV_UPDATED)+(EV_ACTUAL_CHECKED?" · actuals checked "+fmtTime(EV_ACTUAL_CHECKED):"")+" · "+APP_TZ) : "";
+  foot.textContent = EV_UPDATED ? ("calendar updated "+fmtTime(EV_UPDATED)+(EV_ACTUAL_CHECKED?" · actuals checked "+fmtTime(EV_ACTUAL_CHECKED):"")+(EV_DIAGNOSTICS.last_error?" · ERROR: "+EV_DIAGNOSTICS.last_error:"")+" · "+APP_TZ) : "";
 }
 
 async function loadEvents(force){
@@ -566,7 +566,7 @@ async function loadEvents(force){
   try{
     const r=await fetch('api/events'+(force?'?refresh=1':''),{cache:'no-store'}); const j=await r.json();
     const prevKey = EV_DAYS.length ? EV_DAYS[EV_DAYIDX] : null;   // keep the day the user is on
-    EVENTS=j.events||[]; EV_UPDATED=j.updated||null; EV_ACTUAL_CHECKED=j.actual_checked||null;
+    EVENTS=j.events||[]; EV_UPDATED=j.updated||null; EV_ACTUAL_CHECKED=j.actual_checked||null; EV_DIAGNOSTICS=j.diagnostics||{};
     EV_DAYS=[...new Set(EVENTS.filter(e=>e.datetime_utc).map(e=>_dayKey(e.datetime_utc)))].sort();
     let idx = prevKey ? EV_DAYS.indexOf(prevKey) : -1;
     if(idx<0){ const tk=_todayKey(); idx=EV_DAYS.indexOf(tk); if(idx<0) idx=EV_DAYS.findIndex(d=>d>=tk); }

@@ -218,9 +218,12 @@ def actual_for(title: str):
     return None
 
 
-def enrich(events: list[dict], within_hours: float = 6.0) -> bool:
+def enrich(events: list[dict], within_hours: float = 24 * 8) -> bool:
     """Fill `actual` for events whose scheduled time passed within the last
-    `within_hours` and is still blank. Returns True if anything changed."""
+    `within_hours` and is still blank.  The default deliberately revisits the
+    previous week: official series and free feeds can lag a release, and an
+    add-on restart must not permanently strand yesterday's value as blank.
+    Returns True if anything changed."""
     now = datetime.now(timezone.utc)
     changed = False
     for ev in events:

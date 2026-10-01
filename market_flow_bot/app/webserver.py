@@ -166,7 +166,14 @@ class _Handler(BaseHTTPRequestHandler):
                     log.info("manual events refresh complete; actual values changed=%s",changed)
                 except Exception as exc:   # noqa: BLE001 - serve last cache on failure
                     log.warning("manual events refresh failed: %s", exc)
-            return self._send(200, json.dumps(_ev.load()).encode(), "application/json")
+            payload = _ev.load()
+            payload["diagnostics"] = {
+                "calendar_updated": payload.get("updated"),
+                "actuals_checked": payload.get("actual_checked"),
+                "actuals_updated": payload.get("actuals_updated"),
+                "last_error": payload.get("last_refresh_error"),
+            }
+            return self._send(200, json.dumps(payload).encode(), "application/json")
         if path == "/api/watch":
             from . import watchlist as _wl
             q = parse_qs(parsed.query)

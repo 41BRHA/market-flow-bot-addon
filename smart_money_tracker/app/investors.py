@@ -183,10 +183,15 @@ class InvestorStore:
             hay = (row["issuer"] + " " + row["cusip"] + " " + row.get("ticker", "")).lower()
             if query and query.lower() not in hay: continue
             output.append(row)
-        if sort == "value_desc": output.sort(key=lambda x: x["current_value"], reverse=True)
-        elif sort == "change_desc": output.sort(key=lambda x: abs(x["value_change"]), reverse=True)
-        elif sort == "weight_desc": output.sort(key=lambda x: x["portfolio_pct"], reverse=True)
-        elif sort == "issuer": output.sort(key=lambda x: x["issuer"].lower())
+        reverse=sort.endswith('_desc')
+        if sort in ("value_desc","value_asc"): output.sort(key=lambda x:x["current_value"],reverse=reverse)
+        elif sort in ("change_desc","change_asc"): output.sort(key=lambda x:abs(x["value_change"]),reverse=reverse)
+        elif sort in ("weight_desc","weight_asc"): output.sort(key=lambda x:x["portfolio_pct"],reverse=reverse)
+        elif sort in ("shares_desc","shares_asc"): output.sort(key=lambda x:x["current_shares"],reverse=reverse)
+        elif sort in ("share_change_desc","share_change_asc"): output.sort(key=lambda x:abs(x["share_change"]),reverse=reverse)
+        elif sort in ("issuer","issuer_desc"): output.sort(key=lambda x:x["issuer"].lower(),reverse=sort=='issuer_desc')
+        elif sort in ("cusip","cusip_desc"): output.sort(key=lambda x:x["cusip"],reverse=sort=='cusip_desc')
+        elif sort in ("kind","kind_desc"): output.sort(key=lambda x:(x["change"],x["issuer"].lower()),reverse=sort=='kind_desc')
         else: raise ValueError("Invalid institutional sort")
         return {"manager": MANAGER_BY_CIK[cik], "filing": dict(current),
                 "previous": dict(previous) if previous else None, "portfolio_value": total,
