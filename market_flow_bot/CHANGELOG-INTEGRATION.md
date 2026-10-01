@@ -69,6 +69,10 @@ Adds a politician-disclosure section to the selected stock's detail panel, readi
   every cycle and broad names every fourth cycle while cached bars remain usable.
 - Keeps activity scores available outside the regular session using the last
   completed comparable session.
+## 0.20.3
+
+- Fixed the Mock 2 manual-order controls appearing while Mock 1 automatic was selected.
+
 ## 0.20.2
 
 - Added persistent pending-buy confirmation to Mock 1: two qualifying scans in regular hours and three in pre/after-hours by default.

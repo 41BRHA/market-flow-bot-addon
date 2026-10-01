@@ -89,6 +89,17 @@
   users receive a new-data notice and refresh it manually.
 - Adds estimated weighted buy price, current return and unrealised gain/loss to
   Current Holdings with matching sort options and confidence warnings.
+## 0.8.2
+
+- Fixed Executive/OGE leaving Donald Trump filters stuck in the Disclosures view.
+- Executive/OGE now remains visibly selected while active and clears conflicting filters when opened.
+- Clicking Disclosures resets Executive mode and reloads all politicians and branches.
+
+## 0.8.1
+
+- Added Report period and Filed date columns to every notable-investor 13F holding row.
+- Clarified that 13F reports do not reveal exact transaction dates.
+
 ## 0.8.0
 
 - Restored Donald J. Trump / Executive OGE discovery through OGE's current public JSON collection endpoint.

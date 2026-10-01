@@ -1,5 +1,5 @@
 name: Smart Money Tracker
-version: "0.8.0"
+version: "0.8.2"
 slug: smart_money_tracker
 description: Politician disclosures, stock exposure and political-flow mapping with Market Flow integration.
 arch: [amd64, aarch64]
