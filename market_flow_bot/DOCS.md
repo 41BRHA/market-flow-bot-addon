@@ -44,6 +44,33 @@ in both AI-Infra and Technology) is fine and intended — they're separate lense
 - `notify.telegram_*` — optional direct Telegram fallback.
 - `webull.*` — key/secret/region for the live path.
 
+## Unusual Market Activity (v0.18)
+
+The **Activity alerts** tab scores every equity already collected by Market Flow.
+It compares volume so far with previous sessions at the same time of day, then
+adds the latest 15-minute burst, acceleration versus the preceding 15 minutes,
+price direction, Chaikin flow and delayed option-chain confirmation. It does not
+compare a partial morning with a full trading day.
+
+Options are sampled in a paced background queue for only the strongest stock
+candidates. Yahoo snapshots provide cumulative contract volume and daily open
+interest, not tick-by-tick OPRA trades; therefore they confirm a signal but do
+not prove that contracts were newly bought or that a trader had inside knowledge.
+
+Activity settings:
+
+- `enabled` / `options_enabled` — independently enable stock and options scans.
+- `options_candidates` — maximum strong candidates queued per cycle (default 8).
+- `options_refresh_minutes` — per-ticker chain refresh interval (default 30).
+- `app_highlight_score` — card highlight and options-queue threshold (default 65).
+- `notify_score` — immediate phone-alert threshold (default 85).
+- `min_relative_volume` and `min_dollar_volume` — additional notification gates.
+- `notify_cooldown_minutes` — prevents repeated alerts for the same signal.
+
+Potential Buy / Bullish Watch / Bearish Watch / Reduce-Risk are algorithmic
+screening labels, not personalised investment recommendations. The expanded card
+shows the inputs behind every score.
+
 ## Quiet notifications (v0.17.1)
 
 `alerts.quiet_mode` defaults to `true`. It disables routine flow summaries and

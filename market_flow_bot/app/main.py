@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 import time
 
-from . import constituents, webserver, events, watchlist
+from . import constituents, webserver, events, watchlist, activity
 from .config import Config, Sector
 from .history import History
 from .barstore import BarStore
@@ -57,6 +57,7 @@ def run() -> None:
     cooldown = Cooldown(signal_cooldown)
     summary_cd = Cooldown(cfg.summary_cooldown_minutes)
     move_cd = Cooldown(cfg.alerts.move_cooldown_minutes)
+    activity_cd = Cooldown(cfg.activity.notify_cooldown_minutes)
     alert_budget = AlertBudget(cfg.alerts.max_notifications_per_hour)
     store = Store()
     saved = store.load()
@@ -69,6 +70,8 @@ def run() -> None:
         df = bars.get_bars("5m", sym, _t.time() - 7200, _t.time())
         return float(df["close"].iloc[-1]) if not df.empty else None
     mp_worker = MaxPainWorker(mp_store, spot_fn=_spot)
+    options_worker = activity.OptionsActivityWorker(
+        refresh_seconds=cfg.activity.options_refresh_minutes * 60)
     last_prune = 0.0
 
     sectors, symbols = _resolve(cfg)
@@ -117,6 +120,15 @@ def run() -> None:
             signals, flowboard, directions = compute(
                 frames, sectors, cfg.benchmark, cfg.thresholds, cfg.alerts,
                 prev_dir, session=session, history=history, first_cycle=first_cycle)
+            activity_rows = []
+            # The baseline is regular-session time-of-day volume. Do not compare
+            # pre-market bars with it; after-hours may display the completed day.
+            if cfg.activity.enabled and session in ("regular", "postmarket"):
+                activity_rows = activity.scan(frames, options_worker.snapshots())
+                if cfg.activity.options_enabled:
+                    candidates = [r["ticker"] for r in activity_rows
+                                  if r["stock_score"] >= cfg.activity.app_highlight_score]
+                    options_worker.request(candidates, cfg.activity.options_candidates)
             # Stamp the snapshot with the NEWEST BAR's time, not the wall clock, so
             # "updated N min ago" reflects the real data age. Yahoo is ~15 min
             # delayed, so this is honestly ~15-20 min behind during a live session;
@@ -150,6 +162,14 @@ def run() -> None:
                 "fetched": len(frames), "total_symbols": len(symbols), "updated": updated,
                 "data_age_min": data_age_min, "stale": stale,
                 "leader": flowboard[0].name if flowboard else None,
+                "activity": activity_rows[:cfg.activity.max_rows],
+                "activity_meta": {
+                    "enabled": cfg.activity.enabled,
+                    "options_enabled": cfg.activity.options_enabled,
+                    "highlight_score": cfg.activity.app_highlight_score,
+                    "notify_score": cfg.activity.notify_score,
+                    "method": "time-of-day relative volume + acceleration + price/flow + delayed options confirmation",
+                },
             })
             if not stale:
                 prev_dir = directions
@@ -176,6 +196,31 @@ def run() -> None:
                                 notifier.send(f"[{session}] {sig.title}", sig.message)
                             else:
                                 log.info("hourly notification cap reached; suppressed %s", sig.key)
+
+                    # ---- unusual stock/options activity alerts -----------
+                    # Only the highest-conviction rows notify. Lower scores remain
+                    # visible in Activity Alerts without disturbing the user.
+                    for row in activity_rows[:10]:
+                        if (row["score"] < cfg.activity.notify_score or
+                                row["rvol"] < cfg.activity.min_relative_volume or
+                                row["dollar_volume"] < cfg.activity.min_dollar_volume):
+                            continue
+                        key = f"activity_{row['ticker']}_{row['signal']}"
+                        if not activity_cd.ready(key, now_ts):
+                            continue
+                        name = webserver.company_name(row["ticker"], wait_seconds=0.0)
+                        label = f"{name} ({row['ticker']})" if name else row["ticker"]
+                        opt = row.get("options") or {}
+                        opt_text = ""
+                        if opt:
+                            opt_text = f" Options C/P {opt.get('call_put_volume_ratio', 0):.2f}×."
+                        msg = (f"{label}: {row['signal']} {row['score']:.0f}/100. "
+                               f"Volume {row['rvol']:.1f}× normal; 15m burst {row['burst_ratio']:.1f}×; "
+                               f"price {row['change_pct']:+.1f}%; flow {row['flow']:+.2f}.{opt_text}")
+                        if alert_budget.ready(now_ts):
+                            notifier.send(f"Unusual activity — {label}", msg)
+                        else:
+                            log.info("hourly notification cap reached; suppressed %s", key)
 
                 # ---- price-move alerts (independent of the flow signals) ----
                 # Skipped when the data is stale so a delayed/failed fetch can't

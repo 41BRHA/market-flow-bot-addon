@@ -8,7 +8,12 @@ capital is rotating between them — a ratio break, a basket divergence, a volum
 spike, or a breadth split. Alerts are pushed into Home Assistant, which fans them
 out to whatever notifiers you already have (mobile app, Telegram, email…).
 
-**Runs today on free delayed data (Yahoo).** A Webull live path (MQTT) is
+**Runs today on free delayed data (Yahoo).** Version 0.18 adds an **Activity
+Alerts** window: time-of-day relative volume, 15-minute bursts, acceleration,
+price/flow confirmation and paced delayed option-chain confirmation. Moderate
+signals stay in the app; only configurable high scores notify your phone.
+
+A Webull live path (MQTT) is
 scaffolded for real-time pre-market alerts once you add an API key — see DOCS.md.
 
 ## Install (local add-on)

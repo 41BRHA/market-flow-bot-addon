@@ -94,6 +94,17 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(get_trades(_SMART_URL, ticker)).encode(), "application/json")
         if path == "/api/settings":
             return self._send(200, json.dumps({"display_timezone": _DISPLAY_TIMEZONE}).encode(), "application/json")
+        if path == "/api/activity":
+            try:
+                with open(_LATEST_PATH, "r", encoding="utf-8") as fh:
+                    latest = json.load(fh)
+                payload = {"rows": latest.get("activity", []),
+                           "meta": latest.get("activity_meta", {}),
+                           "updated": latest.get("updated"),
+                           "stale": latest.get("stale", False)}
+                return self._send(200, json.dumps(payload).encode(), "application/json")
+            except Exception:
+                return self._send(200, b'{"rows":[],"meta":{},"pending":true}', "application/json")
         if path == "/api/trade-prices":
             if _ENGINE is None:
                 return self._send(200, b'{"error":"engine not ready","prices":{}}', "application/json")

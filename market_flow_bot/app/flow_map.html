@@ -36,6 +36,25 @@
     border:1px solid var(--line); background:var(--panel); color:var(--ink);
     border-radius:999px; padding:7px 12px; font-size:13px; cursor:pointer; display:flex; gap:6px; align-items:center;
   }
+  .appnav{display:flex;gap:7px;margin:8px 0 4px}
+  .appnav .pill{border-radius:9px}
+  .activity-view{display:none;margin-top:12px}
+  .activity-view.on{display:block}
+  .activity-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:end;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px}
+  .activity-tools label{font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+  .activity-tools input,.activity-tools select{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:7px 9px;font-size:13px;min-width:120px}
+  .activity-summary{font-size:12px;color:var(--muted);margin:8px 2px 12px}
+  .activity-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:10px}
+  .activity-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+  .activity-card.hot{border-color:#e0a83c;box-shadow:0 0 0 1px rgba(224,168,60,.2)}
+  .activity-card.urgent{border-color:var(--out);box-shadow:0 0 0 1px rgba(239,91,107,.25)}
+  .activity-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+  .activity-ticker{font-size:20px;font-weight:800}.activity-score{font-size:21px;font-weight:850}
+  .activity-signal{font-size:12px;font-weight:750;margin-top:2px}
+  .activity-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border-radius:9px;overflow:hidden;margin-top:10px}
+  .activity-metric{background:var(--bg);padding:8px}.activity-metric span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.activity-metric b{display:block;font-size:13px;margin-top:2px}
+  .activity-card summary{cursor:pointer;color:var(--muted);font-size:11px;margin-top:9px}
+  .activity-detail{font-size:11px;line-height:1.5;color:var(--muted);margin-top:8px}
   .map{aspect-ratio:1/1}
   .mainrow{display:flex; gap:14px; align-items:flex-start; justify-content:center; margin-top:6px}
   .map{flex:0 1 820px; min-width:0; max-height:84vh}
@@ -177,6 +196,11 @@
     <button class="toggle" id="themeBtn" aria-label="Toggle theme">🌙 <span id="themeLbl">Dark</span></button>
   </header>
 
+  <div class="appnav" id="appnav">
+    <button class="pill on" id="flowTab">Flow map</button>
+    <button class="pill" id="activityTab">Activity alerts</button>
+  </div>
+
   <div class="controls" id="controls">
     <div class="pills" id="pills"></div>
     <button class="pill custom" id="customBtn">📅</button>
@@ -222,6 +246,17 @@
     <aside class="sec-list" id="secList"></aside>
   </div>
 
+  <section class="activity-view" id="activityView">
+    <div class="activity-tools">
+      <label>Search ticker<input id="activitySearch" placeholder="e.g. NVDA" autocomplete="off"></label>
+      <label>Signal<select id="activitySignal"><option value="">All signals</option><option>Potential Buy</option><option>Bullish Watch</option><option>Bearish Watch</option><option>Reduce / Risk</option><option>Unusual / Mixed</option><option>Watch</option></select></label>
+      <label>Minimum score<input id="activityMin" type="number" min="0" max="100" value="50"></label>
+      <label>Sort<select id="activitySort"><option value="score">Highest score</option><option value="rvol">Relative volume</option><option value="burst">15m burst</option><option value="acceleration">Acceleration</option><option value="move">Price movement</option><option value="value">Dollar volume</option><option value="ticker">Ticker</option></select></label>
+    </div>
+    <div class="activity-summary" id="activitySummary">Waiting for the next market-data cycle…</div>
+    <div class="activity-grid" id="activityGrid"></div>
+  </section>
+
   <div class="legend">
     <span><span class="dot" style="background:var(--in)"></span><b>Inflow</b> — buying pressure</span>
     <span><span class="dot" style="background:var(--out)"></span><b>Outflow</b> — selling pressure</span>
@@ -243,10 +278,56 @@
 /* ---- fetch health (live bot will publish these). ---- */
 let STATUS={fetched:0, total:0, updated:Date.now()};   // reassigned per period; must be `let`
 let APP_TZ='Europe/London';
+let APP_VIEW='flow', ACTIVITY_ROWS=[], ACTIVITY_META={}, ACTIVITY_UPDATED=null;
 const _parts=(value,options)=>new Intl.DateTimeFormat('en-GB',{timeZone:APP_TZ,...options}).formatToParts(new Date(value));
 const _part=(parts,type)=>parts.find(x=>x.type===type)?.value||'';
 const fmtTime=value=>new Intl.DateTimeFormat('en-GB',{timeZone:APP_TZ,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(value));
 async function loadSettings(){try{const r=await fetch('api/settings',{cache:'no-store'}),j=await r.json();if(j.display_timezone)APP_TZ=j.display_timezone}catch(e){}}
+
+function setAppView(which){
+  APP_VIEW=which;
+  document.getElementById('flowTab').classList.toggle('on',which==='flow');
+  document.getElementById('activityTab').classList.toggle('on',which==='activity');
+  document.getElementById('activityView').classList.toggle('on',which==='activity');
+  const flow=which==='flow';
+  document.getElementById('controls').style.display=flow&&VIEW==='main'?'':'none';
+  document.getElementById('sectorControls').style.display=flow&&VIEW==='sector'?'':'none';
+  document.querySelector('.mainrow').style.display=flow&&VIEW==='main'?'':'none';
+  document.getElementById('sectorView').classList.toggle('on',flow&&VIEW==='sector');
+  document.querySelectorAll('.legend,.note').forEach(e=>e.style.display=flow?'':'none');
+  document.getElementById('backBtn').style.display=flow&&VIEW==='sector'?'':'none';
+  document.getElementById('h1').textContent=which==='activity'?'Unusual Market Activity':(VIEW==='sector'?SECTOR_NAME:'Market Flow Map');
+  if(which==='activity'){document.getElementById('daterow').hidden=true;renderActivity();}
+  else renderStatus();
+}
+document.getElementById('flowTab').onclick=()=>setAppView('flow');
+document.getElementById('activityTab').onclick=()=>setAppView('activity');
+
+const fmtMoney=v=>{v=Number(v)||0;if(v>=1e9)return '$'+(v/1e9).toFixed(1)+'B';if(v>=1e6)return '$'+(v/1e6).toFixed(1)+'M';if(v>=1e3)return '$'+(v/1e3).toFixed(0)+'K';return '$'+v.toFixed(0)};
+function renderActivity(){
+  const grid=document.getElementById('activityGrid'), summary=document.getElementById('activitySummary');
+  const search=(document.getElementById('activitySearch').value||'').trim().toUpperCase();
+  const signal=document.getElementById('activitySignal').value, min=Number(document.getElementById('activityMin').value)||0;
+  const sort=document.getElementById('activitySort').value;
+  let rows=ACTIVITY_ROWS.filter(r=>(!search||r.ticker.includes(search))&&(!signal||r.signal===signal)&&r.score>=min);
+  const sorters={score:(a,b)=>b.score-a.score,rvol:(a,b)=>b.rvol-a.rvol,burst:(a,b)=>b.burst_ratio-a.burst_ratio,
+    acceleration:(a,b)=>b.acceleration-a.acceleration,move:(a,b)=>Math.abs(b.change_pct)-Math.abs(a.change_pct),value:(a,b)=>b.dollar_volume-a.dollar_volume,ticker:(a,b)=>a.ticker.localeCompare(b.ticker)};
+  rows.sort(sorters[sort]||sorters.score);
+  const updated=ACTIVITY_UPDATED?fmtTime(ACTIVITY_UPDATED):'waiting';
+  summary.textContent=`${rows.length} matching stocks · updated ${updated} · scores are signals, not investment advice`;
+  if(!rows.length){grid.innerHTML='<div class="sd-note">No stocks match these filters yet. The scanner needs previous-session and current-session bars.</div>';return;}
+  grid.innerHTML=rows.map(r=>{
+    const opt=r.options||null, cls=r.score>=85?'urgent':r.score>=65?'hot':'';
+    const dir=r.direction>0?'up':r.direction<0?'down':'';
+    const rising=opt&&opt.volume_change!=null?` · +${Number(opt.volume_change).toLocaleString()} contracts since prior scan`:'';
+    const options=opt?`Calls/puts ${Number(opt.call_put_volume_ratio||0).toFixed(2)}× · option volume ${Number(opt.total_volume||0).toLocaleString()}${rising} · premium estimate calls ${fmtMoney(opt.call_premium)} / puts ${fmtMoney(opt.put_premium)} · ${escHtml(opt.source||'delayed snapshot')}`:'Options confirmation queued or unavailable.';
+    return `<article class="activity-card ${cls}"><div class="activity-top"><div><div class="activity-ticker">${escHtml(r.ticker)}</div><div class="activity-signal ${dir}">${escHtml(r.signal)}</div></div><div class="activity-score ${dir}">${Number(r.score).toFixed(0)}<small>/100</small></div></div>`+
+      `<div class="activity-metrics"><div class="activity-metric"><span>Relative vol.</span><b>${Number(r.rvol).toFixed(1)}×</b></div><div class="activity-metric"><span>15m burst</span><b>${Number(r.burst_ratio).toFixed(1)}×</b></div><div class="activity-metric"><span>Acceleration</span><b>${Number(r.acceleration).toFixed(1)}×</b></div><div class="activity-metric"><span>Price</span><b class="${dir}">${Number(r.change_pct)>=0?'+':''}${Number(r.change_pct).toFixed(1)}%</b></div><div class="activity-metric"><span>Flow</span><b class="${dir}">${Number(r.flow)>=0?'+':''}${Number(r.flow).toFixed(2)}</b></div><div class="activity-metric"><span>Value traded</span><b>${fmtMoney(r.dollar_volume)}</b></div></div>`+
+      `<details><summary>Why this score / options details</summary><div class="activity-detail">Volume so far is compared with previous sessions at the same time of day. The 15-minute burst is compared with the same interval on prior days; acceleration compares the latest 15 minutes with the preceding 15 minutes.<br>${options}</div></details></article>`;
+  }).join('');
+}
+async function loadActivity(){try{const r=await fetch('api/activity',{cache:'no-store'}),j=await r.json();ACTIVITY_ROWS=j.rows||[];ACTIVITY_META=j.meta||{};ACTIVITY_UPDATED=j.updated||null;if(APP_VIEW==='activity')renderActivity()}catch(e){}}
+['activitySearch','activitySignal','activityMin','activitySort'].forEach(id=>document.getElementById(id).addEventListener(id==='activitySearch'?'input':'change',renderActivity));
 
 function renderStatus(){
   const dot=document.getElementById('hdot'), txt=document.getElementById('statustxt');
@@ -289,7 +370,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function setPeriod(key,label,silent){
   currentPeriod=label||key; currentKey=key;
   document.getElementById('prevbanner').hidden=true;
-  document.querySelectorAll('.pill').forEach(el=>el.classList.toggle('on', el.dataset.k===key));
+  document.querySelectorAll('#pills .pill').forEach(el=>el.classList.toggle('on', el.dataset.k===key));
   if(key==='Live'){
     LOADING=false;
     current = LIVE_DATA || [];
@@ -711,7 +792,7 @@ document.getElementById('customBtn').onclick=()=>{
 document.getElementById('applyBtn').onclick=()=>{
   const f=document.getElementById('fromD').value, t=document.getElementById('toD').value;
   if(!f||!t){return;}
-  document.querySelectorAll('.pill').forEach(el=>el.classList.remove('on'));
+  document.querySelectorAll('#pills .pill').forEach(el=>el.classList.remove('on'));
   setPeriod(`${f}_${t}`, `${f} → ${t}`);
 };
 
@@ -890,8 +971,8 @@ addEventListener('popstate',()=>{
 async function boot(){
   await loadSettings();
   current=[];applyTheme(saved);buildPills();buildSectorPills();
-  setPeriod('1d');loadLive();loadEvents();
-  setInterval(loadLive,60000);setInterval(refreshCurrent,120000);setInterval(loadEvents,300000);
+  setPeriod('1d');loadLive();loadEvents();loadActivity();
+  setInterval(loadLive,60000);setInterval(loadActivity,60000);setInterval(refreshCurrent,120000);setInterval(loadEvents,300000);
 }
 boot();
 </script>

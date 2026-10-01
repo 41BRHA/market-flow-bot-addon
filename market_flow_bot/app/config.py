@@ -95,6 +95,20 @@ class WebullCfg:
 
 
 @dataclass
+class ActivityCfg:
+    enabled: bool = True
+    options_enabled: bool = True
+    options_candidates: int = 8
+    options_refresh_minutes: int = 30
+    app_highlight_score: float = 65.0
+    notify_score: float = 85.0
+    min_relative_volume: float = 1.8
+    min_dollar_volume: float = 5_000_000.0
+    notify_cooldown_minutes: int = 240
+    max_rows: int = 60
+
+
+@dataclass
 class Config:
     display_timezone: str = "Europe/London"
     data_source: str = "yahoo"
@@ -114,6 +128,7 @@ class Config:
     ingress_port: int = 8099
     notify: NotifyCfg = field(default_factory=NotifyCfg)
     webull: WebullCfg = field(default_factory=WebullCfg)
+    activity: ActivityCfg = field(default_factory=ActivityCfg)
 
     @classmethod
     def load(cls) -> "Config":
@@ -121,6 +136,7 @@ class Config:
         th = raw.get("thresholds", {})
         nt = raw.get("notify", {})
         wb = raw.get("webull", {})
+        activity = raw.get("activity", {})
         al = raw.get("alerts", {})
         sectors = [Sector(name=s["name"], symbols=list(s.get("symbols", [])), holdings_etf=s.get("holdings_etf", "")) for s in raw.get("sectors", [])]
         alerts = AlertCfg(**{k: al[k] for k in al if k in AlertCfg.__annotations__})
@@ -144,6 +160,7 @@ class Config:
             smart_money_url=str(raw.get("smart_money_url", "http://local-smart-money-tracker:8098")),
             notify=NotifyCfg(**{k: nt[k] for k in nt if k in NotifyCfg.__annotations__}),
             webull=WebullCfg(**{k: wb[k] for k in wb if k in WebullCfg.__annotations__}),
+            activity=ActivityCfg(**{k: activity[k] for k in activity if k in ActivityCfg.__annotations__}),
         )
 
     @staticmethod

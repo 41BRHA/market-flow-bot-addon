@@ -51,6 +51,10 @@ Adds a politician-disclosure section to the selected stock's detail panel, readi
 - **0.17.4** — Correct Fair Economy calendar times (the feed clock is GMT/UTC,
   not New York local time) and expose the display timezone as a configuration
   dropdown.
+- **0.18.0** — Add Unusual Market Activity: time-of-day relative volume,
+  15-minute bursts and acceleration, price/flow confirmation, paced delayed
+  options snapshots, configurable high-conviction phone alerts, and a searchable
+  sortable Activity Alerts dashboard.
 - **0.17.5** — Preserve legitimate calendar actuals across schedule refreshes,
   report the last actual-data check separately, use current BEA release pages
   for GDP/PCE where available, and prevent ADP/GDP-price events from receiving
