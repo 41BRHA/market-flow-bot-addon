@@ -29,6 +29,7 @@ _SMART_URL = ""
 _ENGINE = None   # PeriodEngine, set by start()
 _FUNDAMENTALS = None
 _DISPLAY_TIMEZONE = "Europe/London"
+_PAPER = None
 
 
 def company_name(ticker: str, wait_seconds: float = 6.0) -> str:
@@ -105,6 +106,19 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps(payload).encode(), "application/json")
             except Exception:
                 return self._send(200, b'{"rows":[],"meta":{},"pending":true}', "application/json")
+        if path == "/api/paper":
+            if _PAPER is None:
+                return self._send(503, b'{"error":"paper ledger not ready"}', "application/json")
+            account = (parse_qs(parsed.query).get("account") or ["auto"])[0]
+            try:
+                with open(_LATEST_PATH, "r", encoding="utf-8") as fh:
+                    latest = json.load(fh)
+                prices = {r.get("ticker"): r for r in latest.get("activity", [])}
+                return self._send(200, json.dumps(_PAPER.snapshot(account, prices)).encode(), "application/json")
+            except ValueError as exc:
+                return self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")
+            except Exception as exc:
+                return self._send(500, json.dumps({"error": str(exc)}).encode(), "application/json")
         if path == "/api/trade-prices":
             if _ENGINE is None:
                 return self._send(200, b'{"error":"engine not ready","prices":{}}', "application/json")
@@ -216,15 +230,38 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send(500, f"page missing: {exc}".encode(), "text/plain")
         self._send(404, b"not found", "text/plain")
 
+    def do_POST(self):  # noqa: N802
+        path = urlparse(self.path).path.rstrip("/")
+        if path not in ("/api/paper/rules", "/api/paper/order") or _PAPER is None:
+            return self._send(404, b"not found", "text/plain")
+        if self.headers.get("X-Flow-Request") != "1":
+            return self._send(403, b'{"error":"missing request header"}', "application/json")
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if size < 0 or size > 100_000:
+                return self._send(413, b'{"error":"request too large"}', "application/json")
+            payload = json.loads(self.rfile.read(size) or b"{}")
+            if path == "/api/paper/rules":
+                result = _PAPER.save_rules(payload, str(payload.get("account") or "auto"))
+            else:
+                result = _PAPER.manual_trade(payload)
+            return self._send(200, json.dumps(result).encode(), "application/json")
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            return self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")
+        except Exception as exc:
+            log.exception("paper request failed")
+            return self._send(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+
     def log_message(self, *_args):  # silence per-request logging
         pass
 
 
-def start(port: int = 8099, engine=None, smart_money_url="", display_timezone="Europe/London") -> None:
-    global _ENGINE, _SMART_URL, _FUNDAMENTALS, _DISPLAY_TIMEZONE
+def start(port: int = 8099, engine=None, smart_money_url="", display_timezone="Europe/London", paper=None) -> None:
+    global _ENGINE, _SMART_URL, _FUNDAMENTALS, _DISPLAY_TIMEZONE, _PAPER
     _ENGINE = engine
     _SMART_URL = smart_money_url
     _DISPLAY_TIMEZONE = display_timezone
+    _PAPER = paper
     from .fundamentals import FundamentalsService
     _FUNDAMENTALS = FundamentalsService()
 

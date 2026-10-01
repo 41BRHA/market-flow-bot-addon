@@ -25,12 +25,12 @@ def estimate_holdings(history):
         if not symbol or action not in ('Buy','Sell'):continue
         pos=positions.setdefault(symbol,dict(ticker=symbol,company=trade.get('asset') or '',estimated_shares=0.0,
             buy_value=0.0,sell_value=0.0,buy_count=0,sell_count=0,priced_trades=0,unpriced_trades=0,
-            unknown_opening=False,last_transaction='',latest_price=trade.get('current_price')))
+            bought_shares=0.0,unknown_opening=False,last_transaction='',latest_price=trade.get('current_price')))
         px=trade.get('estimated_price')
         if value is None or not isinstance(px,(int,float)) or px<=0:pos['unpriced_trades']+=1
         else:
             shares=value/px;pos['priced_trades']+=1
-            if action=='Buy':pos['estimated_shares']+=shares;pos['buy_value']+=value;pos['buy_count']+=1
+            if action=='Buy':pos['estimated_shares']+=shares;pos['bought_shares']+=shares;pos['buy_value']+=value;pos['buy_count']+=1
             else:
                 if shares>pos['estimated_shares']:pos['unknown_opening']=True
                 pos['estimated_shares']=max(0.0,pos['estimated_shares']-shares);pos['sell_value']+=value;pos['sell_count']+=1
@@ -40,6 +40,12 @@ def estimate_holdings(history):
     for pos in positions.values():
         pos['estimated_shares']=round(pos['estimated_shares'],4)
         pos['estimated_current_value']=round(pos['estimated_shares']*pos['latest_price'],2) if isinstance(pos.get('latest_price'),(int,float)) else None
+        pos['estimated_avg_buy_price']=round(pos['buy_value']/pos['bought_shares'],4) if pos['bought_shares']>0 else None
+        if isinstance(pos.get('latest_price'),(int,float)) and pos.get('estimated_avg_buy_price'):
+            pos['estimated_return_pct']=round((pos['latest_price']/pos['estimated_avg_buy_price']-1)*100,2)
+            pos['estimated_unrealised_gain']=round((pos['latest_price']-pos['estimated_avg_buy_price'])*pos['estimated_shares'],2)
+        else:
+            pos['estimated_return_pct']=None;pos['estimated_unrealised_gain']=None
         pos['net_disclosed_value']=round(pos['buy_value']-pos['sell_value'],2)
         pos['status']='Likely held' if pos['estimated_shares']>0 else ('Unknown opening balance' if pos['unknown_opening'] else 'Sold / closed')
         pos['confidence']='Low' if pos['unknown_opening'] or pos['unpriced_trades'] else 'Medium'
@@ -105,6 +111,11 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                     if sort=='value_desc':rows.sort(key=lambda x:(x['estimated_current_value'] is not None,x['estimated_current_value'] or 0),reverse=True)
                     elif sort=='ticker':rows.sort(key=lambda x:x['ticker'])
                     elif sort=='recent':rows.sort(key=lambda x:x['last_transaction'],reverse=True)
+                    elif sort=='return_desc':rows.sort(key=lambda x:(x['estimated_return_pct'] is not None,x['estimated_return_pct'] or 0),reverse=True)
+                    elif sort=='return_asc':rows.sort(key=lambda x:(x['estimated_return_pct'] is None,x['estimated_return_pct'] or 0))
+                    elif sort=='gain_desc':rows.sort(key=lambda x:(x['estimated_unrealised_gain'] is not None,x['estimated_unrealised_gain'] or 0),reverse=True)
+                    elif sort=='buy_price':rows.sort(key=lambda x:(x['estimated_avg_buy_price'] is None,x['estimated_avg_buy_price'] or 0))
+                    elif sort=='latest_price':rows.sort(key=lambda x:(x['latest_price'] is None,x['latest_price'] or 0),reverse=True)
                     else:raise ValueError('Invalid holdings sort')
                     return self.send(200,{'person':person,'holdings':rows,'total':len(rows),
                         'estimated_total_value':round(sum(x['estimated_current_value'] or 0 for x in rows),2),
@@ -127,7 +138,7 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                         for person_row in row['top_politicians']:person_row['score']=scores.get(person_row['name'],{}).get('score')
                     available_sectors=sorted({r['market'].get('sector') or 'Unclassified' for r in rows})
                     available_industries=sorted({r['market'].get('industry') for r in rows if r['market'].get('industry')})
-                    sector=q.get('sector','');industry=q.get('industry','');minimum=float(q['min_value']) if q.get('min_value','').strip() else None
+                    sector=q.get('sector','');industry=q.get('industry','');query=q.get('query','').strip().lower();minimum=float(q['min_value']) if q.get('min_value','').strip() else None
                     maximum=float(q['max_value']) if q.get('max_value','').strip() else None
                     min_people=max(0,int(q.get('min_politicians',0) or 0));min_score=float(q['min_score']) if q.get('min_score','').strip() else None
                     for value in (minimum,maximum,min_score):
@@ -135,7 +146,8 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                     if (minimum is not None and minimum<0) or (maximum is not None and maximum<0):raise ValueError('Value filters cannot be negative')
                     if minimum is not None and maximum is not None and minimum>maximum:raise ValueError('Minimum value exceeds maximum')
                     if min_score is not None and not 0<=min_score<=100:raise ValueError('Minimum score must be between 0 and 100')
-                    rows=[r for r in rows if (not sector or r['market'].get('sector')==sector)
+                    rows=[r for r in rows if (not query or query in (r['ticker']+' '+r.get('company','')+' '+str(r['market'].get('company_name') or '')).lower())
+                          and (not sector or r['market'].get('sector')==sector)
                           and (not industry or r['market'].get('industry')==industry)
                           and (minimum is None or r['gross_estimated']>=minimum)
                           and (maximum is None or r['gross_estimated']<=maximum)
@@ -150,6 +162,7 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                     elif sort=='recent':rows.sort(key=lambda r:(r['last_disclosure'],r['last_transaction']),reverse=True)
                     elif sort=='max_pain':rows.sort(key=lambda r:(r['market'].get('max_pain_distance_pct') is not None,abs(r['market'].get('max_pain_distance_pct') or 0)),reverse=True)
                     elif sort=='ticker':rows.sort(key=lambda r:r['ticker'])
+                    elif sort=='sector':rows.sort(key=lambda r:((r['market'].get('sector') or 'Unclassified').lower(),r['ticker']))
                     else:raise ValueError('Invalid stock sort order')
                     total=len(rows);limit=max(1,min(500,int(q.get('limit',500))));offset=max(0,min(100000,int(q.get('offset',0))))
                     return self.send(200,{'stocks':rows[offset:offset+limit],'total':total,'limit':limit,'offset':offset,

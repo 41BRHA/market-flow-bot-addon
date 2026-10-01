@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import time
 
 from . import constituents, webserver, events, watchlist, activity
+from .paper import PaperLedger
 from .config import Config, Sector
 from .history import History
 from .barstore import BarStore
@@ -25,7 +26,8 @@ RESOLVE_EVERY = 6 * 3600
 
 
 def _resolve(cfg) -> tuple[list[Sector], list[str]]:
-    mapping = constituents.resolve(cfg.sectors, cfg.auto_constituents, cfg.top_n)
+    mapping = constituents.resolve(cfg.sectors, cfg.auto_constituents,
+                                   max(cfg.top_n, cfg.activity.broad_symbols_per_sector))
     # overlay the runtime watchlist — extra tickers added from the dashboard,
     # merged into existing sectors (or creating a new sector by name)
     for name, extra in watchlist.load().items():
@@ -72,6 +74,7 @@ def run() -> None:
     mp_worker = MaxPainWorker(mp_store, spot_fn=_spot)
     options_worker = activity.OptionsActivityWorker(
         refresh_seconds=cfg.activity.options_refresh_minutes * 60)
+    paper = PaperLedger()
     last_prune = 0.0
 
     sectors, symbols = _resolve(cfg)
@@ -80,7 +83,7 @@ def run() -> None:
     engine = PeriodEngine(lambda: sectors, cfg.benchmark, provider, bars,
                           mp_store=mp_store, mp_worker=mp_worker)
     webserver.start(cfg.ingress_port, engine=engine, smart_money_url=cfg.smart_money_url,
-                    display_timezone=cfg.display_timezone)
+                    display_timezone=cfg.display_timezone, paper=paper)
     engine.warm()   # pre-compute common windows (1d/3d/6h/3h/1h) in the background
     total = sum(len(s.symbols) for s in sectors)
     log.info("Up. source=%s sectors=%d constituents=%d symbols=%d poll=%ss benchmark=%s",
@@ -92,6 +95,7 @@ def run() -> None:
     events.refresh()
     last_events = time.time()
     last_enrich = time.time()
+    cycle_number = 0
 
     while True:
         if time.time() - last_events > 3 * 3600:
@@ -111,9 +115,24 @@ def run() -> None:
         sectors, symbols = _resolve(cfg)
         try:
             now_ts = time.time()
-            frames = provider.get_bars(symbols, interval=INTERVAL, lookback=LOOKBACK)
-            for _sym, _df in frames.items():
+            cycle_number += 1
+            core = []
+            for sec in sectors:
+                for symbol in sec.symbols[:cfg.activity.core_symbols_per_sector]:
+                    if symbol not in core: core.append(symbol)
+            for symbol in cfg.benchmark:
+                if symbol not in core: core.append(symbol)
+            fetch_symbols = symbols if cycle_number == 1 or cycle_number % cfg.activity.broad_refresh_cycles == 0 else core
+            fresh_frames = provider.get_bars(fetch_symbols, interval=INTERVAL, lookback=LOOKBACK)
+            for _sym, _df in fresh_frames.items():
                 bars.put_bars("5m", _sym, _df)
+            frames = dict(fresh_frames)
+            # Broad names are refreshed less often, but their recent cached bars
+            # remain part of sector flow and All Scores between refreshes.
+            for _sym in symbols:
+                if _sym not in frames:
+                    cached = bars.get_bars("5m", _sym, now_ts - 5 * 86400, now_ts)
+                    if not cached.empty: frames[_sym] = cached
             # keep the common period snapshots warm off the freshly-stored 5m bars
             # (background, de-duplicated; reads cache, so no extra Yahoo load)
             engine.warm()
@@ -123,12 +142,17 @@ def run() -> None:
             activity_rows = []
             # The baseline is regular-session time-of-day volume. Do not compare
             # pre-market bars with it; after-hours may display the completed day.
-            if cfg.activity.enabled and session in ("regular", "postmarket"):
+            if cfg.activity.enabled:
                 activity_rows = activity.scan(frames, options_worker.snapshots())
+                sector_by_symbol = {symbol: sec.name for sec in sectors for symbol in sec.symbols}
+                for row in activity_rows:
+                    row["sector"] = sector_by_symbol.get(row["ticker"], "Unclassified")
+                    row["company"] = webserver.company_name(row["ticker"], wait_seconds=0.0)
                 if cfg.activity.options_enabled:
                     candidates = [r["ticker"] for r in activity_rows
                                   if r["stock_score"] >= cfg.activity.app_highlight_score]
                     options_worker.request(candidates, cfg.activity.options_candidates)
+                paper.process(activity_rows, session=session)
             # Stamp the snapshot with the NEWEST BAR's time, not the wall clock, so
             # "updated N min ago" reflects the real data age. Yahoo is ~15 min
             # delayed, so this is honestly ~15-20 min behind during a live session;
@@ -159,7 +183,8 @@ def run() -> None:
                      "breadth": (round(st.breadth) if st.breadth is not None else None),
                      "rel_strength": round(st.rel_strength, 2), "rvol": round(st.rvol, 2)}
                     for st in flowboard],
-                "fetched": len(frames), "total_symbols": len(symbols), "updated": updated,
+                "fetched": len(fresh_frames), "scored_symbols": len(activity_rows),
+                "total_symbols": len(symbols), "updated": updated,
                 "data_age_min": data_age_min, "stale": stale,
                 "leader": flowboard[0].name if flowboard else None,
                 "activity": activity_rows[:cfg.activity.max_rows],
@@ -168,6 +193,9 @@ def run() -> None:
                     "options_enabled": cfg.activity.options_enabled,
                     "highlight_score": cfg.activity.app_highlight_score,
                     "notify_score": cfg.activity.notify_score,
+                    "universe_size": len(symbols),
+                    "fresh_count": len(fresh_frames),
+                    "tier": "broad" if len(fetch_symbols) == len(symbols) else "core",
                     "method": "time-of-day relative volume + acceleration + price/flow + delayed options confirmation",
                 },
             })

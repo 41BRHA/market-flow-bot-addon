@@ -55,6 +55,18 @@
   .activity-metric{background:var(--bg);padding:8px}.activity-metric span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.activity-metric b{display:block;font-size:13px;margin-top:2px}
   .activity-card summary{cursor:pointer;color:var(--muted);font-size:11px;margin-top:9px}
   .activity-detail{font-size:11px;line-height:1.5;color:var(--muted);margin-top:8px}
+  .data-view{display:none;margin-top:12px}.data-view.on{display:block}
+  .score-wrap,.paper-panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:auto}
+  .score-table,.paper-table{width:100%;border-collapse:collapse;min-width:980px;font-size:12px}
+  .score-table th,.score-table td,.paper-table th,.paper-table td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+  .score-table th button{border:0;background:none;color:var(--muted);font-weight:700;cursor:pointer;padding:0}
+  .company{display:block;color:var(--muted);font-size:10px;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+  .positive{color:var(--in)}.negative{color:var(--out)}
+  .new-data{color:#e0a83c;font-weight:750}.paper-summary{display:flex;gap:14px;flex-wrap:wrap;padding:12px}
+  .paper-summary b{font-size:18px}.paper-rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px;padding:12px;border-top:1px solid var(--line)}
+  .paper-rules label{font-size:10px;color:var(--muted)}.paper-rules input{width:100%;margin-top:4px}
+  .paper-actions{display:flex;gap:8px;align-items:end;padding:12px;flex-wrap:wrap;border-top:1px solid var(--line)}
+  .paper-actions label{font-size:10px;color:var(--muted)}.paper-actions input,.paper-actions select,.paper-rules input{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:7px}
   .map{aspect-ratio:1/1}
   .mainrow{display:flex; gap:14px; align-items:flex-start; justify-content:center; margin-top:6px}
   .map{flex:0 1 820px; min-width:0; max-height:84vh}
@@ -199,6 +211,8 @@
   <div class="appnav" id="appnav">
     <button class="pill on" id="flowTab">Flow map</button>
     <button class="pill" id="activityTab">Activity alerts</button>
+    <button class="pill" id="scoresTab">All stock scores</button>
+    <button class="pill" id="paperTab">Paper accounts</button>
   </div>
 
   <div class="controls" id="controls">
@@ -257,6 +271,41 @@
     <div class="activity-grid" id="activityGrid"></div>
   </section>
 
+  <section class="data-view" id="scoresView">
+    <div class="activity-tools">
+      <label>Stock / company<input id="scoreSearch" placeholder="Type ticker or company" autocomplete="off"></label>
+      <label>Sector<select id="scoreSector"><option value="">All sectors</option></select></label>
+      <label>Signal<select id="scoreSignal"><option value="">All signals</option></select></label>
+      <label>Minimum score<input id="scoreMin" type="number" min="0" max="100" value="0"></label>
+      <button class="applybtn" id="scoreRefresh">Refresh displayed data</button>
+    </div>
+    <div class="activity-summary" id="scoreSummary"></div>
+    <div class="score-wrap"><table class="score-table"><thead><tr>
+      <th><button data-score-sort="ticker">Ticker / company</button></th><th><button data-score-sort="sector">Sector</button></th>
+      <th><button data-score-sort="score">Score</button></th><th>Signal</th><th><button data-score-sort="price">Price</button></th>
+      <th><button data-score-sort="move">Move</button></th><th><button data-score-sort="rvol">Rel. volume</button></th>
+      <th>15m burst</th><th>Acceleration</th><th>Money flow</th><th>Options</th><th>Value traded</th>
+    </tr></thead><tbody id="scoreRows"></tbody></table></div>
+  </section>
+
+  <section class="data-view" id="paperView">
+    <div class="activity-tools">
+      <label>Account<select id="paperAccount"><option value="auto">Mock 1 — automatic</option><option value="manual">Mock 2 — manual</option></select></label>
+      <button class="applybtn" id="paperRefresh">Refresh portfolio</button>
+    </div>
+    <div class="paper-panel">
+      <div class="paper-summary" id="paperSummary"></div>
+      <div class="paper-rules" id="paperRules"></div>
+      <div class="paper-rules" id="paperExtraRules"></div>
+      <div class="paper-actions" id="manualOrder" hidden>
+        <label>Ticker<input id="orderTicker" maxlength="15"></label><label>Side<select id="orderSide"><option value="buy">Buy</option><option value="sell">Sell</option></select></label>
+        <label>Shares<input id="orderShares" type="number" min="0" step="0.0001"></label><label>Price ($)<input id="orderPrice" type="number" min="0" step="0.01"></label>
+        <button class="applybtn" id="placeOrder">Place mock order</button><span id="orderMessage"></span>
+      </div>
+      <div id="paperPositions"></div><div id="paperEvents"></div>
+    </div>
+  </section>
+
   <div class="legend">
     <span><span class="dot" style="background:var(--in)"></span><b>Inflow</b> — buying pressure</span>
     <span><span class="dot" style="background:var(--out)"></span><b>Outflow</b> — selling pressure</span>
@@ -279,6 +328,7 @@
 let STATUS={fetched:0, total:0, updated:Date.now()};   // reassigned per period; must be `let`
 let APP_TZ='Europe/London';
 let APP_VIEW='flow', ACTIVITY_ROWS=[], ACTIVITY_META={}, ACTIVITY_UPDATED=null;
+let SCORE_ROWS=[], SCORE_SORT='score', SCORE_DESC=true, SCORE_NEW=false;
 const _parts=(value,options)=>new Intl.DateTimeFormat('en-GB',{timeZone:APP_TZ,...options}).formatToParts(new Date(value));
 const _part=(parts,type)=>parts.find(x=>x.type===type)?.value||'';
 const fmtTime=value=>new Intl.DateTimeFormat('en-GB',{timeZone:APP_TZ,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(value));
@@ -288,7 +338,11 @@ function setAppView(which){
   APP_VIEW=which;
   document.getElementById('flowTab').classList.toggle('on',which==='flow');
   document.getElementById('activityTab').classList.toggle('on',which==='activity');
+  document.getElementById('scoresTab').classList.toggle('on',which==='scores');
+  document.getElementById('paperTab').classList.toggle('on',which==='paper');
   document.getElementById('activityView').classList.toggle('on',which==='activity');
+  document.getElementById('scoresView').classList.toggle('on',which==='scores');
+  document.getElementById('paperView').classList.toggle('on',which==='paper');
   const flow=which==='flow';
   document.getElementById('controls').style.display=flow&&VIEW==='main'?'':'none';
   document.getElementById('sectorControls').style.display=flow&&VIEW==='sector'?'':'none';
@@ -296,12 +350,16 @@ function setAppView(which){
   document.getElementById('sectorView').classList.toggle('on',flow&&VIEW==='sector');
   document.querySelectorAll('.legend,.note').forEach(e=>e.style.display=flow?'':'none');
   document.getElementById('backBtn').style.display=flow&&VIEW==='sector'?'':'none';
-  document.getElementById('h1').textContent=which==='activity'?'Unusual Market Activity':(VIEW==='sector'?SECTOR_NAME:'Market Flow Map');
+  document.getElementById('h1').textContent=which==='activity'?'Unusual Market Activity':which==='scores'?'All Stock Scores':which==='paper'?'Paper Trading':(VIEW==='sector'?SECTOR_NAME:'Market Flow Map');
   if(which==='activity'){document.getElementById('daterow').hidden=true;renderActivity();}
+  else if(which==='scores'){document.getElementById('daterow').hidden=true;SCORE_ROWS=ACTIVITY_ROWS.slice();SCORE_NEW=false;populateScoreFilters();renderScores();}
+  else if(which==='paper'){document.getElementById('daterow').hidden=true;loadPaper();}
   else renderStatus();
 }
 document.getElementById('flowTab').onclick=()=>setAppView('flow');
 document.getElementById('activityTab').onclick=()=>setAppView('activity');
+document.getElementById('scoresTab').onclick=()=>setAppView('scores');
+document.getElementById('paperTab').onclick=()=>setAppView('paper');
 
 const fmtMoney=v=>{v=Number(v)||0;if(v>=1e9)return '$'+(v/1e9).toFixed(1)+'B';if(v>=1e6)return '$'+(v/1e6).toFixed(1)+'M';if(v>=1e3)return '$'+(v/1e3).toFixed(0)+'K';return '$'+v.toFixed(0)};
 function renderActivity(){
@@ -326,8 +384,37 @@ function renderActivity(){
       `<details><summary>Why this score / options details</summary><div class="activity-detail">Volume so far is compared with previous sessions at the same time of day. The 15-minute burst is compared with the same interval on prior days; acceleration compares the latest 15 minutes with the preceding 15 minutes.<br>${options}</div></details></article>`;
   }).join('');
 }
-async function loadActivity(){try{const r=await fetch('api/activity',{cache:'no-store'}),j=await r.json();ACTIVITY_ROWS=j.rows||[];ACTIVITY_META=j.meta||{};ACTIVITY_UPDATED=j.updated||null;if(APP_VIEW==='activity')renderActivity()}catch(e){}}
+async function loadActivity(manual=false){try{const r=await fetch('api/activity',{cache:'no-store'}),j=await r.json();ACTIVITY_ROWS=j.rows||[];ACTIVITY_META=j.meta||{};ACTIVITY_UPDATED=j.updated||null;if(APP_VIEW==='activity')renderActivity();if(APP_VIEW==='scores'){if(manual){SCORE_ROWS=ACTIVITY_ROWS.slice();SCORE_NEW=false;populateScoreFilters();renderScores()}else{SCORE_NEW=true;renderScores()}}}catch(e){}}
 ['activitySearch','activitySignal','activityMin','activitySort'].forEach(id=>document.getElementById(id).addEventListener(id==='activitySearch'?'input':'change',renderActivity));
+
+function populateScoreFilters(){
+  const sector=document.getElementById('scoreSector'),signal=document.getElementById('scoreSignal'),sv=sector.value,gv=signal.value;
+  sector.innerHTML='<option value="">All sectors</option>'+[...new Set(SCORE_ROWS.map(r=>r.sector).filter(Boolean))].sort().map(x=>`<option>${escHtml(x)}</option>`).join('');sector.value=sv;
+  signal.innerHTML='<option value="">All signals</option>'+[...new Set(SCORE_ROWS.map(r=>r.signal).filter(Boolean))].sort().map(x=>`<option>${escHtml(x)}</option>`).join('');signal.value=gv;
+}
+function renderScores(){
+  const q=(document.getElementById('scoreSearch').value||'').trim().toLowerCase(),sector=document.getElementById('scoreSector').value,signal=document.getElementById('scoreSignal').value,min=Number(document.getElementById('scoreMin').value)||0;
+  let rows=SCORE_ROWS.filter(r=>(!q||(`${r.ticker} ${r.company||''}`).toLowerCase().includes(q))&&(!sector||r.sector===sector)&&(!signal||r.signal===signal)&&Number(r.score)>=min);
+  const val=(r,k)=>k==='ticker'?r.ticker:k==='sector'?(r.sector||''):k==='move'?Math.abs(Number(r.change_pct)||0):k==='rvol'?Number(r.rvol)||0:Number(r[k])||0;
+  rows.sort((a,b)=>{const x=val(a,SCORE_SORT),y=val(b,SCORE_SORT),n=typeof x==='string'?x.localeCompare(y):x-y;return SCORE_DESC?-n:n});
+  const updated=ACTIVITY_UPDATED?fmtTime(ACTIVITY_UPDATED):'waiting',tier=ACTIVITY_META.tier||'—';
+  document.getElementById('scoreSummary').innerHTML=`${rows.length} of ${SCORE_ROWS.length} scored stocks · ${escHtml(tier)} refresh · displayed ${updated}${SCORE_NEW?' · <span class="new-data">New data available — press Refresh</span>':''} · scores are signals, not investment advice`;
+  document.getElementById('scoreRows').innerHTML=rows.length?rows.map(r=>{const opt=r.options||{},dir=Number(r.change_pct)>=0?'positive':'negative';return `<tr><td><b>${escHtml(r.ticker)}</b><span class="company">${escHtml(r.company||'')}</span></td><td>${escHtml(r.sector||'—')}</td><td><b>${Number(r.score).toFixed(1)}</b><span class="company">stock ${Number(r.stock_score).toFixed(1)} · option ${Number(opt.score||0).toFixed(1)}</span></td><td>${escHtml(r.signal)}</td><td>$${Number(r.price).toFixed(2)}</td><td class="${dir}">${Number(r.change_pct)>=0?'+':''}${Number(r.change_pct).toFixed(2)}%</td><td>${Number(r.rvol).toFixed(2)}×</td><td>${Number(r.burst_ratio).toFixed(2)}×</td><td>${Number(r.acceleration).toFixed(2)}×</td><td class="${Number(r.flow)>=0?'positive':'negative'}">${Number(r.flow)>=0?'+':''}${Number(r.flow).toFixed(3)}</td><td>${opt.call_put_volume_ratio!=null?'C/P '+Number(opt.call_put_volume_ratio).toFixed(2)+'×':'—'}</td><td>${fmtMoney(r.dollar_volume)}</td></tr>`}).join(''):'<tr><td colspan="12">No stocks match these filters. Outside market hours the last completed session appears after the first scan.</td></tr>';
+}
+['scoreSearch','scoreSector','scoreSignal','scoreMin'].forEach(id=>document.getElementById(id).addEventListener(id==='scoreSearch'?'input':'change',renderScores));
+document.querySelectorAll('[data-score-sort]').forEach(b=>b.onclick=()=>{const k=b.dataset.scoreSort;if(SCORE_SORT===k)SCORE_DESC=!SCORE_DESC;else{SCORE_SORT=k;SCORE_DESC=k!=='ticker'&&k!=='sector'}renderScores()});
+document.getElementById('scoreRefresh').onclick=()=>loadActivity(true);
+
+const paperMoney=v=>'$'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2});
+async function loadPaper(){const account=document.getElementById('paperAccount').value;document.getElementById('manualOrder').hidden=account!=='manual';try{const r=await fetch('api/paper?account='+account,{cache:'no-store'}),j=await r.json();if(!r.ok)throw Error(j.error||'Unavailable');const rr=j.rules||{};document.getElementById('paperSummary').innerHTML=`<span>Equity<br><b>${paperMoney(j.equity)}</b></span><span>Cash<br><b>${paperMoney(j.cash)}</b></span><span>Market value<br><b>${paperMoney(j.market_value)}</b></span><span>Unrealised<br><b class="${j.unrealised>=0?'positive':'negative'}">${paperMoney(j.unrealised)}</b></span><span>Realised<br><b class="${j.realised>=0?'positive':'negative'}">${paperMoney(j.realised)}</b></span><span>Win rate<br><b>${j.win_rate==null?'—':j.win_rate+'%'}</b></span>`;document.getElementById('paperRules').innerHTML=`<label><input id="ruleEnabled" type="checkbox" ${rr.enabled?'checked':''}> Automatic strategy enabled</label><label>Buy score ≥<input id="ruleBuy" type="number" value="${rr.buy_score}"></label><label>Exit score ≤ (when profitable)<input id="ruleExit" type="number" value="${rr.score_exit}"></label><label>Position size ($)<input id="ruleSize" type="number" value="${rr.position_size}"></label><label>Maximum positions<input id="ruleMax" type="number" value="${rr.max_positions}"></label><label>Profit targets (%)<input id="ruleTargets" value="${(rr.targets||[]).join(', ')}"></label><label>Sell fractions (%)<input id="ruleFractions" value="${(rr.target_fractions||[]).map(x=>Math.round(x*10000)/100).join(', ')}"></label><label>Stop loss (%)<input id="ruleStop" type="number" value="${rr.stop_loss_pct}"></label><label>Trailing stop (%)<input id="ruleTrail" type="number" value="${rr.trailing_stop_pct}"></label><label>Re-entry cooldown (hours)<input id="ruleCooldown" type="number" value="${rr.reentry_cooldown_hours}"></label><button class="applybtn" id="saveRules">Save strategy rules</button><span id="ruleMessage"></span>`;document.getElementById('saveRules').onclick=savePaperRules;document.getElementById('paperPositions').innerHTML=`<table class="paper-table"><thead><tr><th>Ticker</th><th>Shares</th><th>Average buy</th><th>Current</th><th>Value</th><th>Return</th><th>Unrealised</th><th>Score</th></tr></thead><tbody>${(j.positions||[]).map(p=>`<tr><td><b>${escHtml(p.ticker)}</b></td><td>${Number(p.shares).toFixed(4)}</td><td>${paperMoney(p.avg_price)}</td><td>${paperMoney(p.current_price)}</td><td>${paperMoney(p.market_value)}</td><td class="${p.return_pct>=0?'positive':'negative'}">${p.return_pct>=0?'+':''}${p.return_pct}%</td><td class="${p.unrealised>=0?'positive':'negative'}">${paperMoney(p.unrealised)}</td><td>${p.score==null?'—':p.score}</td></tr>`).join('')||'<tr><td colspan="8">No open paper positions.</td></tr>'}</tbody></table>`;document.getElementById('paperEvents').innerHTML=`<h3 style="padding:12px;margin:0">Decision log</h3><table class="paper-table"><thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Shares</th><th>Price</th><th>Score</th><th>Reason</th><th>Realised</th></tr></thead><tbody>${(j.events||[]).map(e=>`<tr><td>${fmtTime(e.ts)}</td><td>${escHtml(e.ticker||'')}</td><td>${escHtml(e.side)}</td><td>${Number(e.shares||0).toFixed(4)}</td><td>${paperMoney(e.price)}</td><td>${e.score==null?'—':e.score}</td><td>${escHtml(e.reason)}</td><td>${paperMoney(e.realised)}</td></tr>`).join('')||'<tr><td colspan="8">No paper decisions yet.</td></tr>'}</tbody></table>`}catch(e){document.getElementById('paperSummary').textContent=e.message}}
+async function savePaperRules(){const payload={account:document.getElementById('paperAccount').value,enabled:document.getElementById('ruleEnabled').checked,buy_score:document.getElementById('ruleBuy').value,score_exit:document.getElementById('ruleExit').value,position_size:document.getElementById('ruleSize').value,max_positions:document.getElementById('ruleMax').value,targets:document.getElementById('ruleTargets').value.split(',').map(Number),target_fractions:document.getElementById('ruleFractions').value.split(',').map(x=>Number(x)/100),stop_loss_pct:document.getElementById('ruleStop').value,trailing_stop_pct:document.getElementById('ruleTrail').value,reentry_cooldown_hours:document.getElementById('ruleCooldown').value};const r=await fetch('api/paper/rules',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('ruleMessage').textContent=r.ok?'Saved':j.error||'Save failed';if(r.ok)loadPaper()}
+document.getElementById('paperAccount').onchange=loadPaper;document.getElementById('paperRefresh').onclick=loadPaper;
+document.getElementById('placeOrder').onclick=async()=>{const payload={ticker:document.getElementById('orderTicker').value,side:document.getElementById('orderSide').value,shares:document.getElementById('orderShares').value,price:document.getElementById('orderPrice').value};const r=await fetch('api/paper/order',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('orderMessage').textContent=r.ok?'Mock order completed':j.error||'Order failed';if(r.ok)loadPaper()};
+
+const loadPaperCore=loadPaper;
+loadPaper=async function(){await loadPaperCore();try{const account=document.getElementById('paperAccount').value,r=await fetch('api/paper?account='+account,{cache:'no-store'}),j=await r.json(),rr=j.rules||{};document.getElementById('paperSummary').insertAdjacentHTML('beforeend',`<span>Max realised drawdown<br><b class="negative">${paperMoney(j.max_realised_drawdown)}</b></span><span>SPY since tracking<br><b class="${Number(j.spy_return_pct)>=0?'positive':'negative'}">${j.spy_return_pct==null?'Waiting':(j.spy_return_pct>=0?'+':'')+j.spy_return_pct+'%'}</b></span>`);document.getElementById('paperExtraRules').innerHTML=`<label>Maximum holding days (0 = off)<input id="ruleMaxDays" type="number" min="0" value="${rr.max_holding_days||0}"></label><label>Days to avoid before earnings (when available)<input id="ruleEarnings" type="number" min="0" value="${rr.avoid_earnings_days||0}"></label><label><input id="ruleOvernight" type="checkbox" ${rr.allow_overnight?'checked':''}> Allow overnight positions</label><div class="activity-detail">Rules are evaluated only from cached Market Flow data. Earnings avoidance activates when the data feed supplies a confirmed earnings date.</div>`}catch(e){}};
+savePaperRules=async function(){const payload={account:document.getElementById('paperAccount').value,enabled:document.getElementById('ruleEnabled').checked,buy_score:document.getElementById('ruleBuy').value,score_exit:document.getElementById('ruleExit').value,position_size:document.getElementById('ruleSize').value,max_positions:document.getElementById('ruleMax').value,targets:document.getElementById('ruleTargets').value.split(',').map(Number),target_fractions:document.getElementById('ruleFractions').value.split(',').map(x=>Number(x)/100),stop_loss_pct:document.getElementById('ruleStop').value,trailing_stop_pct:document.getElementById('ruleTrail').value,reentry_cooldown_hours:document.getElementById('ruleCooldown').value,max_holding_days:document.getElementById('ruleMaxDays').value,avoid_earnings_days:document.getElementById('ruleEarnings').value,allow_overnight:document.getElementById('ruleOvernight').checked};const r=await fetch('api/paper/rules',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('ruleMessage').textContent=r.ok?'Saved':j.error||'Save failed';if(r.ok)loadPaper()};
+document.getElementById('paperAccount').onchange=loadPaper;document.getElementById('paperRefresh').onclick=loadPaper;
 
 function renderStatus(){
   const dot=document.getElementById('hdot'), txt=document.getElementById('statustxt');

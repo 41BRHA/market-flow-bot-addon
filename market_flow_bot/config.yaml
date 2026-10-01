@@ -1,5 +1,5 @@
 name: Market Flow Bot
-version: "0.18.0"
+version: "0.19.0"
 slug: market_flow_bot
 description: Live volume-flow rotation engine — money in/out of every GICS sector (top-30 constituents each) plus AI-infra, software, metals (futures) & miners, with tunable big-shift alerts into Home Assistant.
 url: "https://github.com/your/market-flow-bot"
@@ -20,7 +20,7 @@ options:
   data_source: yahoo
   poll_interval_seconds: 900
   auto_constituents: true
-  top_n: 30
+  top_n: 60
   history_days: 180
   ingress_port: 8099
   smart_money_url: "http://local-smart-money-tracker:8098"
@@ -98,7 +98,10 @@ options:
     min_relative_volume: 1.8
     min_dollar_volume: 5000000
     notify_cooldown_minutes: 240
-    max_rows: 60
+    max_rows: 700
+    core_symbols_per_sector: 35
+    broad_refresh_cycles: 4
+    broad_symbols_per_sector: 60
 schema:
   data_source: "list(yahoo|webull)"
   poll_interval_seconds: int(15,3600)
@@ -167,4 +170,7 @@ schema:
     min_relative_volume: float
     min_dollar_volume: float
     notify_cooldown_minutes: int(0,1440)
-    max_rows: int(10,300)
+    max_rows: int(10,1000)
+    core_symbols_per_sector: int(5,100)
+    broad_refresh_cycles: int(1,24)
+    broad_symbols_per_sector: int(10,100)

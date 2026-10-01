@@ -105,7 +105,10 @@ class ActivityCfg:
     min_relative_volume: float = 1.8
     min_dollar_volume: float = 5_000_000.0
     notify_cooldown_minutes: int = 240
-    max_rows: int = 60
+    max_rows: int = 700
+    core_symbols_per_sector: int = 35
+    broad_refresh_cycles: int = 4
+    broad_symbols_per_sector: int = 60
 
 
 @dataclass

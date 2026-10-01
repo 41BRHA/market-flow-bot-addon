@@ -82,3 +82,10 @@
 
 - Fix add-on startup after adding the Executive/OGE collector by explicitly
   installing its `requests` HTTP dependency.
+## 0.7.0
+
+- Adds live ticker/company search and clickable per-column sorting to Stock Exposure.
+- Stops visual background refreshes from replacing the Stock Exposure screen;
+  users receive a new-data notice and refresh it manually.
+- Adds estimated weighted buy price, current return and unrealised gain/loss to
+  Current Holdings with matching sort options and confidence warnings.

@@ -1,0 +1,33 @@
+import tempfile
+
+from market_flow_bot.app.paper import PaperLedger
+from smart_money_tracker.app.core import normalise
+from smart_money_tracker.app.main import estimate_holdings
+
+
+def test_auto_paper_targets_then_score_exit():
+    ledger = PaperLedger(tempfile.NamedTemporaryFile(suffix='.db').name)
+    ledger.save_rules({'position_size': 3000, 'buy_score': 80, 'score_exit': 75,
+                       'targets': [5, 12.5, 20], 'target_fractions': [1/3, 1/3, 1/3]}, 'auto')
+    ledger.process([{'ticker': 'ABC', 'price': 100, 'score': 85}], session='regular')
+    ledger.process([{'ticker': 'ABC', 'price': 105, 'score': 85}], session='regular')
+    position = ledger.snapshot('auto', {'ABC': {'price': 105}})['positions'][0]
+    assert 19.9 < position['shares'] < 20.1
+    ledger.process([{'ticker': 'ABC', 'price': 106, 'score': 74}], session='regular')
+    assert ledger.snapshot('auto', {'ABC': {'price': 106}})['positions'] == []
+
+
+def test_holdings_estimated_buy_price_return_and_gain():
+    rows = []
+    for index, (action, amount) in enumerate([('Buy', '$10,000 - $10,000'),
+                                               ('Sell', '$2,000 - $2,000')]):
+        row = normalise({'ticker': 'ABC', 'politician': 'Test Person', 'chamber': 'House',
+                         'action': action, 'transaction_date': f'09/{index + 1:02d}/2026',
+                         'disclosure_date': '09/30/2026', 'amount': amount},
+                        'csv_import', str(index))
+        row.update(estimated_price=100.0, current_price=120.0)
+        rows.append(row)
+    holding = estimate_holdings(rows)[0]
+    assert holding['estimated_avg_buy_price'] == 100
+    assert holding['estimated_return_pct'] == 20
+    assert holding['estimated_unrealised_gain'] == 1600

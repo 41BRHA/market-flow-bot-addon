@@ -59,3 +59,13 @@ Adds a politician-disclosure section to the selected stock's detail panel, readi
   report the last actual-data check separately, use current BEA release pages
   for GDP/PCE where available, and prevent ADP/GDP-price events from receiving
   unrelated government-series values.
+## 0.19.0
+
+- Adds a stable **All Stock Scores** page with live search, sector/signal filters,
+  sortable columns, full component data and a manual new-data handoff.
+- Adds two persistent, broker-free paper accounts: automatic strategy and manual
+  orders, editable rules, staged exits, score exit, stops and decision history.
+- Expands the universe with upgrade-safe 60-name sector scans. Core names refresh
+  every cycle and broad names every fourth cycle while cached bars remain usable.
+- Keeps activity scores available outside the regular session using the last
+  completed comparable session.
