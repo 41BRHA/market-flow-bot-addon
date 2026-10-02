@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import time
 
 from . import constituents, webserver, events, watchlist, activity
-from .paper import PaperLedger
+from .paper import PaperLedger, fresh_quote
 from .config import Config, Sector
 from .history import History
 from .barstore import BarStore
@@ -140,10 +140,23 @@ def run() -> None:
                 frames, sectors, cfg.benchmark, cfg.thresholds, cfg.alerts,
                 prev_dir, session=session, history=history, first_cycle=first_cycle)
             activity_rows = []
+            quotes = {}
+            for symbol,frame in frames.items():
+                complete=frame[frame.index <= datetime.now(timezone.utc)-timedelta(minutes=5)]
+                if not complete.empty:
+                    quotes[symbol]={"ticker":symbol,"price":float(complete["close"].iloc[-1]),
+                                    "asof":complete.index[-1].isoformat(),"score":None,"rvol":0}
             # The baseline is regular-session time-of-day volume. Do not compare
             # pre-market bars with it; after-hours may display the completed day.
             if cfg.activity.enabled:
-                activity_rows = activity.scan(frames, options_worker.snapshots())
+                # Flow computation only needs the recent fetch. Activity scoring
+                # reads the longer persistent cache so its 5/20/40-session
+                # same-time volume baselines improve without extra API traffic.
+                activity_frames = {}
+                for _sym in frames:
+                    cached = bars.get_bars("5m", _sym, now_ts - 60 * 86400, now_ts)
+                    activity_frames[_sym] = cached if not cached.empty else frames[_sym]
+                activity_rows = activity.scan(activity_frames, options_worker.snapshots())
                 sector_by_symbol = {symbol: sec.name for sec in sectors for symbol in sec.symbols}
                 for row in activity_rows:
                     row["sector"] = sector_by_symbol.get(row["ticker"], "Unclassified")
@@ -152,7 +165,8 @@ def run() -> None:
                     candidates = [r["ticker"] for r in activity_rows
                                   if r["stock_score"] >= cfg.activity.app_highlight_score]
                     options_worker.request(candidates, cfg.activity.options_candidates)
-                paper.process(activity_rows, session=session)
+                scored={row["ticker"]:row for row in activity_rows}
+                paper.process([scored.get(symbol,quote) for symbol,quote in quotes.items()], session=session)
             # Stamp the snapshot with the NEWEST BAR's time, not the wall clock, so
             # "updated N min ago" reflects the real data age. Yahoo is ~15 min
             # delayed, so this is honestly ~15-20 min behind during a live session;
@@ -188,6 +202,7 @@ def run() -> None:
                 "data_age_min": data_age_min, "stale": stale,
                 "leader": flowboard[0].name if flowboard else None,
                 "activity": activity_rows[:cfg.activity.max_rows],
+                "quotes":quotes,
                 "activity_meta": {
                     "enabled": cfg.activity.enabled,
                     "options_enabled": cfg.activity.options_enabled,
@@ -229,7 +244,7 @@ def run() -> None:
                     # Only the highest-conviction rows notify. Lower scores remain
                     # visible in Activity Alerts without disturbing the user.
                     for row in activity_rows[:10]:
-                        if (row["score"] < cfg.activity.notify_score or
+                        if (not fresh_quote(row) or row.get("session") != session or row["score"] < cfg.activity.notify_score or
                                 row["rvol"] < cfg.activity.min_relative_volume or
                                 row["dollar_volume"] < cfg.activity.min_dollar_volume):
                             continue

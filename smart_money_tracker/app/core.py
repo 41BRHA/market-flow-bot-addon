@@ -3,6 +3,7 @@ import csv
 import hashlib
 import io
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -53,11 +54,21 @@ def estimated_amount(trade):
     unknown upper bound is known.
     """
     low, high = trade.get('amount_min'), trade.get('amount_max')
-    if not isinstance(low, (int, float)):
+    if not isinstance(low, (int, float)) or not math.isfinite(low) or low<0:
         return None
     if isinstance(high, (int, float)):
+        if not math.isfinite(high) or high<low:return None
         return (float(low) + float(high)) / 2
     return float(low)
+
+
+def equity_trade(trade):
+    """Only supported underlying-equity transactions may use stock returns."""
+    kind=str(trade.get('asset_type') or '').strip().upper()
+    description=str(trade.get('asset') or '').lower()
+    if kind not in ('','NOT STATED','ST','STOCK','COMMON STOCK'):return False
+    if re.search(r'\b(option|options|call|put|bond|bonds|warrant|warrants)\b',description):return False
+    return True
 
 
 def amount_summary(trades):
@@ -222,6 +233,8 @@ class Store:
             raise ValueError('Estimated value filters cannot be negative')
         if minimum is not None and maximum is not None and minimum > maximum:
             raise ValueError('Minimum estimated value exceeds maximum')
+        if any(v is not None and not math.isfinite(v) for v in (minimum,maximum)):
+            raise ValueError('Value filters must be finite')
         with self.lock:
             rows=self.db.execute('SELECT payload FROM trades WHERE '+clause+' ORDER BY disclosure_date DESC,politician COLLATE NOCASE,transaction_date DESC,ticker,id',args).fetchall()
         grouped={}
@@ -351,9 +364,14 @@ class Store:
         end=iso_date(until) if until else ''
         if start and end and start>end:raise ValueError('Start date is after end date')
         with self.lock:rows=self.db.execute('SELECT payload FROM trades ORDER BY disclosure_date DESC,transaction_date DESC').fetchall()
+        decoded=[json.loads(row[0]) for row in rows]
+        amended={(t.get('politician'),t.get('ticker')) for t in decoded if t.get('amendment')}
         grouped={}
-        for row in rows:
-            trade=json.loads(row[0]);day=trade.get(date_basis+'_date','')
+        for trade in decoded:
+            day=trade.get(date_basis+'_date','')
+            # Raw amended records stay visible in Disclosures, but are not
+            # added a second time to inferred flow until reconciled.
+            if (trade.get('politician'),trade.get('ticker')) in amended:continue
             if person and person.lower() not in trade.get('politician','').lower():continue
             if chamber and trade.get('chamber')!=chamber:continue
             if action and trade.get('action')!=action:continue

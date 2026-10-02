@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
-from .core import Store,estimated_amount,import_csv,ticker
+from .core import Store,estimated_amount,import_csv,ticker,equity_trade
 from .prices import PriceBridge,politician_score
 from .profiles import ProfileService
 from .sync import Collector
@@ -18,50 +18,92 @@ from .executive import ExecutiveCollector
 
 
 def estimate_holdings(history):
-    """Reconstruct estimated remaining shares from priced disclosure midpoints."""
+    """Conservative moving-average cost basis per ticker AND reported owner.
+
+    Transactions are midpoint estimates, not verified quantities. Unpriced,
+    amended or unsupported positions are explicitly withheld from valuation.
+    """
     positions={}
+    def positive(x): return isinstance(x,(int,float)) and math.isfinite(x) and x>0
     for trade in sorted(history,key=lambda t:(t.get('transaction_date',''),t.get('disclosure_date',''),t.get('id',''))):
-        symbol=trade.get('ticker','');action=trade.get('action');value=estimated_amount(trade)
+        symbol=trade.get('ticker','');action=trade.get('action')
         if not symbol or action not in ('Buy','Sell'):continue
-        pos=positions.setdefault(symbol,dict(ticker=symbol,company=trade.get('asset') or '',estimated_shares=0.0,
+        key=(symbol,trade.get('owner') or 'Not stated')
+        pos=positions.setdefault(key,dict(ticker=symbol,company=trade.get('asset') or '',estimated_shares=0.0,
             buy_value=0.0,sell_value=0.0,buy_count=0,sell_count=0,priced_trades=0,unpriced_trades=0,
-            bought_shares=0.0,unknown_opening=False,last_transaction='',latest_price=trade.get('current_price')))
-        px=trade.get('estimated_price')
-        if value is None or not isinstance(px,(int,float)) or px<=0:pos['unpriced_trades']+=1
-        else:
-            shares=value/px;pos['priced_trades']+=1
-            if action=='Buy':pos['estimated_shares']+=shares;pos['bought_shares']+=shares;pos['buy_value']+=value;pos['buy_count']+=1
-            else:
-                if shares>pos['estimated_shares']:pos['unknown_opening']=True
-                pos['estimated_shares']=max(0.0,pos['estimated_shares']-shares);pos['sell_value']+=value;pos['sell_count']+=1
+            remaining_cost=0.0,unknown_opening=False,last_transaction='',latest_price=None,
+            unsupported_trades=0,amendment_review=False))
         pos['last_transaction']=max(pos['last_transaction'],trade.get('transaction_date',''))
-        if isinstance(trade.get('current_price'),(int,float)):pos['latest_price']=trade['current_price']
-    rows=[]
-    for pos in positions.values():
-        pos['estimated_shares']=round(pos['estimated_shares'],4)
-        pos['estimated_current_value']=round(pos['estimated_shares']*pos['latest_price'],2) if isinstance(pos.get('latest_price'),(int,float)) else None
-        pos['estimated_avg_buy_price']=round(pos['buy_value']/pos['bought_shares'],4) if pos['bought_shares']>0 else None
-        if isinstance(pos.get('latest_price'),(int,float)) and pos.get('estimated_avg_buy_price'):
-            pos['estimated_return_pct']=round((pos['latest_price']/pos['estimated_avg_buy_price']-1)*100,2)
-            pos['estimated_unrealised_gain']=round((pos['latest_price']-pos['estimated_avg_buy_price'])*pos['estimated_shares'],2)
+        if positive(trade.get('current_price')):pos['latest_price']=trade['current_price']
+        if trade.get('amendment'):
+            pos['amendment_review']=True
+            continue
+        if not equity_trade(trade):
+            pos['unsupported_trades']+=1
+            continue
+        value=estimated_amount(trade);px=trade.get('estimated_price')
+        pos['buy_count' if action=='Buy' else 'sell_count']+=1
+        if value is not None:pos['buy_value' if action=='Buy' else 'sell_value']+=value
+        if value is None or not positive(px):
+            pos['unpriced_trades']+=1
+            continue
+        shares=value/px;pos['priced_trades']+=1
+        if action=='Buy':
+            pos['estimated_shares']+=shares;pos['remaining_cost']+=value
         else:
-            pos['estimated_return_pct']=None;pos['estimated_unrealised_gain']=None
+            held=pos['estimated_shares']
+            if shares>held+1e-8:pos['unknown_opening']=True
+            sold=min(shares,held)
+            if held>0:pos['remaining_cost']*=max(0.0,1-sold/held)
+            pos['estimated_shares']=max(0.0,held-sold)
+    # Aggregate owners only AFTER reducing their own lots. Spouse sales must not
+    # erase the member's shares, nor options be netted against common stock.
+    combined={}
+    for pos in positions.values():
+        out=combined.setdefault(pos['ticker'],{**pos,'estimated_shares':0.0,'remaining_cost':0.0,
+            'buy_value':0.0,'sell_value':0.0,'buy_count':0,'sell_count':0,'priced_trades':0,
+            'unpriced_trades':0,'unsupported_trades':0,'unknown_opening':False,'amendment_review':False})
+        for k in ('estimated_shares','remaining_cost','buy_value','sell_value','buy_count','sell_count',
+                  'priced_trades','unpriced_trades','unsupported_trades'):out[k]+=pos[k]
+        for k in ('unknown_opening','amendment_review'):out[k]=out[k] or pos[k]
+        out['last_transaction']=max(out['last_transaction'],pos['last_transaction'])
+        if positive(pos['latest_price']):out['latest_price']=pos['latest_price']
+    rows=[]
+    for pos in combined.values():
+        uncertain=pos['unknown_opening'] or pos['unpriced_trades'] or pos['amendment_review']
+        shares=pos['estimated_shares']
+        avg=pos['remaining_cost']/shares if shares>1e-8 else None
+        price=pos['latest_price']
+        pos['estimated_avg_buy_price']=round(avg,4) if avg and not uncertain else None
+        valid=not uncertain and positive(price)
+        pos['estimated_current_value']=round(shares*price,2) if valid else None
+        pos['estimated_return_pct']=round((price/avg-1)*100,2) if valid and avg else None
+        pos['estimated_unrealised_gain']=round(shares*(price-avg),2) if valid and avg else None
         pos['net_disclosed_value']=round(pos['buy_value']-pos['sell_value'],2)
-        pos['status']='Likely held' if pos['estimated_shares']>0 else ('Unknown opening balance' if pos['unknown_opening'] else 'Sold / closed')
-        pos['confidence']='Low' if pos['unknown_opening'] or pos['unpriced_trades'] else 'Medium'
+        pos['estimated_shares']=None if uncertain else round(shares,4)
+        pos['status']=('Needs review' if uncertain else 'Likely held' if shares>1e-8 else
+                       'Unsupported asset' if pos['unsupported_trades'] else 'Sold / closed')
+        if pos['status']=='Unsupported asset':
+            pos['estimated_shares']=None;pos['estimated_current_value']=None
+        pos['confidence']='Low' if uncertain else 'Medium (estimated)'
         rows.append(pos)
     return rows
 
 
 def start_stock_refresh(store,prices,interval=8*3600):
-    """Warm politician-only market/option caches three times per day."""
+    """Refresh market data in the background; dashboard reads never wait for it."""
     def loop():
         while True:
             tickers=store.tickers()
             try:
+                people=[row['name'] for row in store.people()]
+                history=store.trades_for_people(people)
+                if history:prices.enrich(history,cache_ttl=interval)
+            except Exception:logging.exception('politician trade-price refresh failed')
+            try:
                 if tickers:prices.stock_snapshots(tickers)
             except Exception:logging.exception('politician stock refresh failed')
-            time.sleep(interval if tickers else 600)
+            time.sleep(600 if prices.last_error or not tickers else interval)
     threading.Thread(target=loop,daemon=True).start()
 
 
@@ -104,7 +146,7 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                     enriched=prices.enrich(history,cache_ttl=8*3600) if prices is not None else history
                     rows=estimate_holdings(enriched)
                     state=q.get('state','held')
-                    if state=='held':rows=[x for x in rows if x['estimated_shares']>0]
+                    if state=='held':rows=[x for x in rows if (x['estimated_shares'] or 0)>0 or x['status'] in ('Needs review','Unsupported asset')]
                     elif state=='closed':rows=[x for x in rows if x['estimated_shares']==0]
                     elif state!='all':raise ValueError('Invalid holding status')
                     sort=q.get('sort','value_desc')
@@ -122,7 +164,7 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                     elif sort=='buy_price_desc':rows.sort(key=lambda x:(x['estimated_avg_buy_price'] is not None,x['estimated_avg_buy_price'] or 0),reverse=True)
                     elif sort=='latest_price':rows.sort(key=lambda x:(x['latest_price'] is None,x['latest_price'] or 0),reverse=True)
                     elif sort=='latest_price_asc':rows.sort(key=lambda x:(x['latest_price'] is None,x['latest_price'] or 0))
-                    elif sort=='shares_desc':rows.sort(key=lambda x:x['estimated_shares'],reverse=True)
+                    elif sort=='shares_desc':rows.sort(key=lambda x:x['estimated_shares'] or 0,reverse=True)
                     elif sort=='shares_asc':rows.sort(key=lambda x:x['estimated_shares'])
                     elif sort=='buy_value_desc':rows.sort(key=lambda x:x['buy_value'],reverse=True)
                     elif sort=='buy_value_asc':rows.sort(key=lambda x:x['buy_value'])
@@ -132,8 +174,9 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                     elif sort in ('confidence','confidence_desc'):rows.sort(key=lambda x:(x['confidence'],x['ticker']),reverse=sort.endswith('_desc'))
                     else:raise ValueError('Invalid holdings sort')
                     return self.send(200,{'person':person,'holdings':rows,'total':len(rows),
-                        'estimated_total_value':round(sum(x['estimated_current_value'] or 0 for x in rows),2),
-                        'note':'Estimated from collected range midpoints and Market Flow closing prices; opening balances and exact quantities may be unknown.'})
+                        'estimated_total_value':(round(sum(x['estimated_current_value'] or 0 for x in rows),2) if all(x['estimated_current_value'] is not None for x in rows) else None),
+                        'known_subtotal':round(sum(x['estimated_current_value'] or 0 for x in rows),2),
+                        'note':'Estimated from collected range midpoints and Market Flow closing prices; opening balances, corporate actions and exact quantities may be unknown. Unresolved positions are not valued; options are excluded from share estimates.'})
                 if p.path=='/api/stocks':
                     rows=store.stock_exposure(q.get('person',''),q.get('chamber',''),q.get('action',''),
                         q.get('since',''),q.get('until',''),q.get('date_basis','disclosure'))
@@ -193,12 +236,24 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                         if profiles is not None:trade['profile']=profiles.get(trade.get('politician',''),trade.get('chamber',''),trade.get('district',''))
                     result['market']=(prices.stock_snapshots([symbol],details=True).get(symbol,{}) if prices is not None else {})
                     return self.send(200,result)
+                if p.path=='/api/disclosure-detail':
+                    disclosure_date=q.get('date','')
+                    groups=store.disclosures(q.get('ticker',''),q.get('person',''),q.get('action',''),
+                        disclosure_date,q.get('min_value',''),q.get('max_value',''),q.get('value_scope','filing'))
+                    group=next((g for g in groups if g['disclosure_date']==disclosure_date and
+                                g['politician'].lower()==q.get('person','').strip().lower()),None)
+                    if group is None:raise ValueError('Disclosure is no longer available')
+                    group['trades']=prices.enrich_cached(group['trades']) if prices is not None else group['trades']
+                    for trade in group['trades']:
+                        trade['estimated_value']=estimated_amount(trade)
+                    if profiles is not None:
+                        district=group['trades'][0].get('district','') if group['trades'] else ''
+                        group['profile']=profiles.get(group['politician'],group.get('chamber',''),district)
+                    return self.send(200,group)
                 if p.path=='/api/trades':
-                    result=store.search(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),q.get('limit',50),q.get('offset',0))
                     bridge=q.get('market_bridge') in ('1','true','yes')
-                    if prices is not None:
-                        result['trades']=prices.enrich_cached(result['trades']) if bridge else prices.enrich(result['trades'])
                     if q.get('grouped') in ('1','true','yes'):
+                        result={'trades':[],'total':0}
                         groups=store.disclosures(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),
                                                 q.get('min_value',''),q.get('max_value',''),q.get('value_scope','filing'))
                         branch=q.get('chamber','')
@@ -207,18 +262,27 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                             groups=[g for g in groups if g.get('chamber')==branch]
                         people=list(dict.fromkeys(g['politician'] for g in groups))
                         history=store.trades_for_people(people)
-                        enriched=(prices.enrich_cached(history) if bridge else prices.enrich(history)) if prices is not None else history
+                        # Filings are stored once. Filtering the page must never
+                        # block on thousands of Market Flow HTTP price lookups.
+                        enriched=prices.enrich_cached(history) if prices is not None else history
                         by_id={t.get('id'):t for t in enriched}
                         by_person={}
                         for trade in enriched:by_person.setdefault(trade.get('politician',''),[]).append(trade)
+                        scores={person:politician_score(trades) for person,trades in by_person.items()}
                         for group in groups:
                             group['trades']=[by_id.get(t.get('id'),t) for t in group['trades']]
                             for trade in group['trades']:
                                 trade['estimated_value']=estimated_amount(trade)
-                            group['score']=politician_score(by_person.get(group['politician'],[]))
+                            group['score']=scores.get(group['politician'],politician_score([]))
                             if profiles is not None:
                                 district=group['trades'][0].get('district','') if group['trades'] else ''
                                 group['profile']=profiles.get(group['politician'],group.get('chamber',''),district)
+                            group['buy_count']=sum(t.get('action')=='Buy' for t in group['trades'])
+                            group['sell_count']=sum(t.get('action')=='Sell' for t in group['trades'])
+                            group['other_count']=group['trade_count']-group['buy_count']-group['sell_count']
+                            # Trade rows are loaded only if the user opens this filing.
+                            # Large OGE filings can contain more than a thousand rows.
+                            group.pop('trades',None)
                         sort=q.get('sort','recent')
                         if sort=='score_desc':
                             groups.sort(key=lambda g:(g['score'].get('rated_trades',0)>0,g['score'].get('score',50),g['disclosure_date']),reverse=True)
@@ -244,6 +308,10 @@ def make_handler(store,collector,prices=None,profiles=None,alerts=None,investors
                             raise ValueError('Invalid sort order')
                         limit=max(1,min(50,int(q.get('limit',25))));offset=max(0,min(100000,int(q.get('offset',0))))
                         result.update(disclosures=groups[offset:offset+limit],disclosures_total=len(groups),limit=limit,offset=offset)
+                    else:
+                        result=store.search(q.get('ticker',''),q.get('person',''),q.get('action',''),q.get('since',''),q.get('limit',50),q.get('offset',0))
+                        if prices is not None:
+                            result['trades']=prices.enrich_cached(result['trades']) if bridge else prices.enrich(result['trades'])
                     if prices is not None:result['price_link']=prices.status()
                     if profiles is not None:result['profile_status']=profiles.status()
                     result['status']=store.status();return self.send(200,result)
@@ -321,7 +389,7 @@ def run():
     executive_collector=ExecutiveCollector(store,alerts,options.get('executive_enabled',True),options.get('refresh_hours',6));executive_collector.start()
     investors=InvestorStore(str(base/'institutional.db'))
     investor_collector=InvestorCollector(investors,options.get('sec_user_agent',''),alerts);investor_collector.start()
-    prices=PriceBridge(options.get('market_flow_url','http://local-market-flow-bot:8099'))
+    prices=PriceBridge(options.get('market_flow_url','http://local-market-flow-bot:8099'),base/'price_cache.json')
     start_stock_refresh(store,prices)
     profiles=ProfileService(str(base/'politician_profiles.json'))
     ThreadingHTTPServer(('0.0.0.0',8098),make_handler(store,collector,prices,profiles,alerts,investors,investor_collector,executive_collector,display_timezone)).serve_forever()

@@ -52,7 +52,7 @@ def max_pain_from_chain(call_oi: list[tuple[float, float]],
         for k,oi in rows:
             try:k=float(k)
             except (TypeError,ValueError):continue
-            if math.isfinite(k):out.append((k,_oi(oi)))
+            if math.isfinite(k) and k>0:out.append((k,_oi(oi)))
         return out
     call_oi=clean(call_oi);put_oi=clean(put_oi)
     call_oi = [(k, max(0.0, oi)) for k, oi in call_oi]

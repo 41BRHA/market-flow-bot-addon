@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
@@ -32,7 +33,7 @@ def test_stock_activity_uses_same_time_baseline_and_detects_acceleration():
 
 def test_bullish_options_can_confirm_but_do_not_create_direction():
     base = {"ticker": "TEST", "stock_score": 80, "direction": 1}
-    result = combine_score(base, {"call_put_volume_ratio": 2.5, "score": 80})
+    result = combine_score(base, {"call_put_volume_ratio": 2.5, "score": 80, "total_volume": 100, "asof": datetime.now(timezone.utc).isoformat()})
     assert result["options_confirmed"] is True
     assert result["score"] == 92
     assert result["signal"] == "Potential Buy"

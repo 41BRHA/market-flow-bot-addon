@@ -113,7 +113,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 with open(_LATEST_PATH, "r", encoding="utf-8") as fh:
                     latest = json.load(fh)
-                prices = {r.get("ticker"): r for r in latest.get("activity", [])}
+                prices = latest.get("quotes") or {r.get("ticker"): r for r in latest.get("activity", [])}
                 return self._send(200, json.dumps(_PAPER.snapshot(account, prices)).encode(), "application/json")
             except ValueError as exc:
                 return self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")

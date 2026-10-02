@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import sqlite3
 import threading
 import time
@@ -55,6 +56,7 @@ def parse_information_table(data, filing_date=""):
             continue
         value = int(float(child_text(item, "value") or 0)) * multiplier
         shares = float(child_text(item, "sshPrnamt") or 0)
+        if value<0 or not math.isfinite(shares) or shares<0:raise ValueError("Invalid holding quantity/value")
         row = {
             "issuer": child_text(item, "nameOfIssuer"),
             "title_class": child_text(item, "titleOfClass"),
@@ -76,7 +78,7 @@ def parse_information_table(data, filing_date=""):
 
 
 def holding_key(row):
-    return "|".join((row.get("cusip", ""), row.get("title_class", ""), row.get("put_call", "")))
+    return "|".join((row.get("cusip", ""), row.get("title_class", ""), row.get("put_call", ""), row.get("share_type","SH")))
 
 
 class InvestorStore:
@@ -110,14 +112,23 @@ class InvestorStore:
             return self.db.execute("SELECT 1 FROM filings WHERE accession=?", (accession,)).fetchone() is not None
 
     def save_filing(self, filing, rows):
+        aggregated={}
+        for row in rows:
+            key=holding_key(row)
+            if key not in aggregated:aggregated[key]=dict(row)
+            else:
+                for field in ("value","shares","voting_sole","voting_shared","voting_none"):
+                    aggregated[key][field]=aggregated[key].get(field,0)+row.get(field,0)
         with self.lock, self.db:
+            self.set_meta("amendment:"+filing["accession"],filing.get("amendment_type","unknown"))
             self.db.execute("INSERT OR REPLACE INTO filings VALUES(?,?,?,?,?,?,?,?)", (
                 filing["accession"], filing["cik"], filing["manager"], filing["filed_date"],
                 filing["report_period"], filing["form"], filing["source_url"], now()))
             self.db.execute("DELETE FROM holdings WHERE accession=?", (filing["accession"],))
-            for row in rows:
+            for row in aggregated.values():
                 self.db.execute("INSERT OR REPLACE INTO holdings VALUES(?,?,?)",
                                 (filing["accession"], holding_key(row), json.dumps(row)))
+            self.set_meta("aggregation_v2:"+filing["accession"],True)
 
     def _filings(self, cik):
         with self.lock:
@@ -128,15 +139,35 @@ class InvestorStore:
             rows = self.db.execute("SELECT holding_key,payload FROM holdings WHERE accession=?", (accession,)).fetchall()
         return {r["holding_key"]: json.loads(r["payload"]) for r in rows}
 
+    def _snapshot(self, filings, period):
+        """Apply only explicit restatements/additions in filing order."""
+        result={};warnings=[]
+        for filing in reversed([f for f in filings if f["report_period"]==period]):
+            rows=self._holdings(filing["accession"])
+            if filing["form"]!="13F-HR/A":result=rows;continue
+            kind=self.get_meta("amendment:"+filing["accession"],"unknown")
+            if kind=="RESTATEMENT":result=rows
+            elif kind=="NEW HOLDINGS":
+                if not result:
+                    warnings.append("Additional-holdings amendment lacks its original report.")
+                    continue
+                for key,row in rows.items():
+                    if key not in result:result[key]=dict(row)
+                    else:
+                        for field in ("value","shares","voting_sole","voting_shared","voting_none"):
+                            result[key][field]=result[key].get(field,0)+row.get(field,0)
+            else:warnings.append("Unclassified amendment withheld pending source verification.")
+        return result,warnings
+
     def managers(self):
         subs = {x["cik"]: x for x in self.subscriptions()}
         result = []
         for manager in MANAGERS:
             filings = self._filings(manager["cik"])
             latest = filings[0] if filings else None
-            holdings = self._holdings(latest["accession"]) if latest else {}
+            holdings, warnings = self._snapshot(filings, latest["report_period"]) if latest else ({},[])
             rule = subs.get(manager["cik"], {})
-            result.append({**manager, "filing_count": len(filings),
+            result.append({**manager, "filing_count": len(filings), "warnings":warnings,
                 "latest_filed": latest["filed_date"] if latest else None,
                 "report_period": latest["report_period"] if latest else None,
                 "portfolio_value": sum(x["value"] for x in holdings.values()),
@@ -152,7 +183,7 @@ class InvestorStore:
             raise ValueError("Invalid change filter")
         try: minimum = float(minimum or 0)
         except (TypeError, ValueError) as exc: raise ValueError("Minimum value must be a number") from exc
-        if minimum < 0: raise ValueError("Minimum value cannot be negative")
+        if not math.isfinite(minimum) or minimum < 0: raise ValueError("Minimum value cannot be negative")
         filings = self._filings(cik)
         if not filings:
             return {"manager": MANAGER_BY_CIK[cik], "filing": None, "previous": None, "holdings": []}
@@ -160,12 +191,15 @@ class InvestorStore:
         # Amendments for the same quarter replace that snapshot; compare with
         # the previous distinct report period rather than the original filing.
         previous = next((f for f in filings[1:] if f["report_period"] != current["report_period"]), None)
-        cur = self._holdings(current["accession"]); prev = self._holdings(previous["accession"]) if previous else {}
+        cur,warnings = self._snapshot(filings,current["report_period"])
+        prev,previous_warnings = self._snapshot(filings,previous["report_period"]) if previous else ({},[])
+        warnings+=previous_warnings
         total = sum(x["value"] for x in cur.values())
         output = []
         for key in sorted(set(cur) | set(prev)):
             a, b = cur.get(key), prev.get(key)
-            if a and not b: kind = "New"
+            if not previous or warnings: kind = "Unknown"
+            elif a and not b: kind = "New"
             elif b and not a: kind = "Exited"
             elif a["shares"] > b["shares"]: kind = "Increased"
             elif a["shares"] < b["shares"]: kind = "Reduced"
@@ -173,10 +207,10 @@ class InvestorStore:
             base = a or b
             row = {**base, "change": kind, "current_value": a["value"] if a else 0,
                    "previous_value": b["value"] if b else 0,
-                   "value_change": (a["value"] if a else 0) - (b["value"] if b else 0),
+                   "value_change": ((a["value"] if a else 0) - (b["value"] if b else 0)) if previous and not warnings else None,
                    "current_shares": a["shares"] if a else 0,
                    "previous_shares": b["shares"] if b else 0,
-                   "share_change": (a["shares"] if a else 0) - (b["shares"] if b else 0),
+                   "share_change": ((a["shares"] if a else 0) - (b["shares"] if b else 0)) if previous and not warnings else None,
                    "portfolio_pct": (a["value"] / total * 100) if a and total else 0}
             if change and kind != change: continue
             if max(row["current_value"], row["previous_value"]) < minimum: continue
@@ -185,17 +219,17 @@ class InvestorStore:
             output.append(row)
         reverse=sort.endswith('_desc')
         if sort in ("value_desc","value_asc"): output.sort(key=lambda x:x["current_value"],reverse=reverse)
-        elif sort in ("change_desc","change_asc"): output.sort(key=lambda x:abs(x["value_change"]),reverse=reverse)
+        elif sort in ("change_desc","change_asc"): output.sort(key=lambda x:abs(x["value_change"] or 0),reverse=reverse)
         elif sort in ("weight_desc","weight_asc"): output.sort(key=lambda x:x["portfolio_pct"],reverse=reverse)
         elif sort in ("shares_desc","shares_asc"): output.sort(key=lambda x:x["current_shares"],reverse=reverse)
-        elif sort in ("share_change_desc","share_change_asc"): output.sort(key=lambda x:abs(x["share_change"]),reverse=reverse)
+        elif sort in ("share_change_desc","share_change_asc"): output.sort(key=lambda x:abs(x["share_change"] or 0),reverse=reverse)
         elif sort in ("issuer","issuer_desc"): output.sort(key=lambda x:x["issuer"].lower(),reverse=sort=='issuer_desc')
         elif sort in ("cusip","cusip_desc"): output.sort(key=lambda x:x["cusip"],reverse=sort=='cusip_desc')
         elif sort in ("kind","kind_desc"): output.sort(key=lambda x:(x["change"],x["issuer"].lower()),reverse=sort=='kind_desc')
         else: raise ValueError("Invalid institutional sort")
         return {"manager": MANAGER_BY_CIK[cik], "filing": dict(current),
                 "previous": dict(previous) if previous else None, "portfolio_value": total,
-                "holdings": output, "total": len(output)}
+                "holdings": output, "total": len(output), "warnings":warnings}
 
     def subscriptions(self):
         with self.lock:
@@ -274,6 +308,9 @@ class InvestorCollector:
         return rows[:4]
 
     def _table(self,filing):
+        if filing["form"]=="13F-HR/A":
+            cover=ET.fromstring(self._get(filing["base"]+"/"+filing["primary"]))
+            filing["amendment_type"]=child_text(cover,"amendmentType").strip().upper()
         index=self._json(filing["base"]+"/index.json")
         names=[x.get("name","") for x in index.get("directory",{}).get("item",[])]
         candidates=[x for x in names if x.lower().endswith(".xml") and x!=filing["primary"]]
@@ -291,7 +328,8 @@ class InvestorCollector:
         for manager in MANAGERS:
             try:
                 for filing in reversed(self._filings(manager["cik"])):
-                    if self.store.has_filing(filing["accession"]):continue
+                    if (self.store.has_filing(filing["accession"])
+                            and self.store.get_meta("aggregation_v2:"+filing["accession"],False)):continue
                     rows=self._table(filing);record={**filing,"cik":manager["cik"],"manager":manager["name"],
                         "source_url":filing["base"]+"/"+filing["primary"]}
                     self.store.save_filing(record,rows)
@@ -307,8 +345,8 @@ class InvestorCollector:
         if not rule or self.store.delivered(filing["accession"]):return
         data=self.store.comparison(filing["cik"]);eligible=[x for x in data["holdings"] if x["change"] in rule["changes"] and max(x["current_value"],x["previous_value"])>=rule["min_value"]]
         if not eligible:return
-        leaders=sorted(eligible,key=lambda x:abs(x["value_change"]),reverse=True)[:4]
-        lines=[f'{x["change"]}: {x["issuer"]} ({x["cusip"]}) ${abs(x["value_change"]):,.0f}' for x in leaders]
+        leaders=sorted(eligible,key=lambda x:abs(x["value_change"] or 0),reverse=True)[:4]
+        lines=[f'{x["change"]}: {x["issuer"]} ({x["cusip"]}) ${abs(x["value_change"] or 0):,.0f}' for x in leaders]
         if len(eligible)>4:lines.append(f'+ {len(eligible)-4} more changes')
         ok=self.notifier and self.notifier.send(f'New 13F — {filing["manager"]}',f'Reported {filing["report_period"]} · filed {filing["filed_date"]}\n'+"\n".join(lines))
         if ok:self.store.mark_delivered(filing["accession"])

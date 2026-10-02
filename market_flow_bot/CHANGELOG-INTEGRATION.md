@@ -1,3 +1,12 @@
+# v0.20.4
+
+- Activity relative volume now blends same-time-of-day median baselines over
+  5, 20 and up to 40 prior trading sessions when cached history is available.
+- The monthly baseline carries the greatest weight; robust medians prevent one
+  exceptional market day from distorting the following session's score.
+- Activity scoring now reads up to 60 days from the persistent bar cache without
+  adding market-data requests. Shorter histories remain supported automatically.
+
 # 0.17.3
 
 - Prevent intermittent per-stock “Smart Money Tracker not reachable” cards by marking Market Flow bridge requests and avoiding a circular pricing callback.

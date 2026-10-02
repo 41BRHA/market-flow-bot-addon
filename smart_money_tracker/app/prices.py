@@ -14,10 +14,11 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from .core import equity_trade
 
 
 class PriceBridge:
-    def __init__(self, base_url):
+    def __init__(self, base_url, cache_path=None):
         self.configured = str(base_url or '').rstrip('/')
         self.base_url = self.configured        # kept for external references
         self._good = None                       # last base_url that worked
@@ -26,6 +27,26 @@ class PriceBridge:
         self.lock = threading.Lock()
         self.last_success = None
         self.last_error = None
+        self.cache_path = str(cache_path) if cache_path else ''
+        if self.cache_path:
+            try:
+                saved = json.loads(open(self.cache_path, encoding='utf-8').read())
+                self.cache = {str(k):(float(v[0]),v[1]) for k,v in saved.items()
+                              if isinstance(v,list) and len(v)==2 and isinstance(v[1],dict)}
+            except (OSError,ValueError,TypeError):
+                self.cache = {}
+
+    def _save_cache(self):
+        """Persist price results so opening the dashboard never has to refill them."""
+        if not self.cache_path:return
+        try:
+            directory=os.path.dirname(self.cache_path) or '.';os.makedirs(directory,exist_ok=True)
+            temporary=self.cache_path+'.tmp'
+            with self.lock:data={k:[v[0],v[1]] for k,v in self.cache.items()}
+            with open(temporary,'w',encoding='utf-8') as stream:json.dump(data,stream,separators=(',',':'))
+            os.replace(temporary,self.cache_path)
+        except OSError:
+            pass
 
     @staticmethod
     def _key(trade):
@@ -78,7 +99,7 @@ class PriceBridge:
         keys = list(dict.fromkeys(self._key(t) for t in out if t.get('action') in ('Buy', 'Sell')))
         if not keys:
             return out
-        now = time.monotonic(); needed = []; found = {}
+        now = time.time(); needed = []; found = {}
         with self.lock:
             for key in keys:
                 cached = self.cache.get(key)
@@ -103,6 +124,7 @@ class PriceBridge:
                     for key in needed[i + 75:]:
                         self.cache[key] = (now, {'pending': True}); found[key] = {'pending': True}
                 break
+        if needed:self._save_cache()
         for trade in out:
             price = found.get(self._key(trade), {})
             trade['estimated_price'] = price.get('estimated_price')
@@ -116,6 +138,10 @@ class PriceBridge:
                 trade['directional_return_pct'] = round(market_return if trade.get('action') == 'Buy' else -market_return, 2)
             except (TypeError, ValueError, ZeroDivisionError):
                 trade['directional_return_pct'] = None
+            if (not equity_trade(trade) or trade.get('amendment')
+                    or not all(isinstance(x,(int,float)) and math.isfinite(x) and x>0
+                               for x in (trade.get('estimated_price'),trade.get('current_price')))):
+                trade['directional_return_pct']=None
         return out
 
     def enrich_cached(self,trades):
@@ -140,6 +166,10 @@ class PriceBridge:
                 market_return=(current/estimate-1)*100
                 trade['directional_return_pct']=round(market_return if trade.get('action')=='Buy' else -market_return,2)
             except (TypeError,ValueError,ZeroDivisionError):trade['directional_return_pct']=None
+            if (not equity_trade(trade) or trade.get('amendment')
+                    or not all(isinstance(x,(int,float)) and math.isfinite(x) and x>0
+                               for x in (trade.get('estimated_price'),trade.get('current_price')))):
+                trade['directional_return_pct']=None
         return out
 
     def _fetch_stocks(self,tickers,details=False):
@@ -162,7 +192,7 @@ class PriceBridge:
 
     def stock_snapshots(self,tickers,details=False):
         tickers=list(dict.fromkeys(str(t or '').strip().upper().replace('.','-') for t in tickers if t))[:1000]
-        now=time.monotonic();found={};needed=[]
+        now=time.time();found={};needed=[]
         with self.lock:
             for ticker in tickers:
                 cached=self.stock_cache.get((ticker,details))
@@ -195,6 +225,10 @@ class PriceBridge:
 
 def politician_score(trades):
     """0-100 score: return and win rate, shrunk toward 50 for small samples."""
+    # Unresolved amendments make that person's ticker history ambiguous.
+    uncertain={(t.get('politician'),t.get('ticker')) for t in trades if t.get('amendment')}
+    trades=[t for t in trades if equity_trade(t) and
+            (t.get('politician'),t.get('ticker')) not in uncertain]
     returns = []
     for trade in trades:
         value = trade.get('directional_return_pct')

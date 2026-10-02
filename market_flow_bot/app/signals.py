@@ -158,16 +158,16 @@ def pct_changes(frames, mode: str = "prev_close") -> dict[str, float]:
         if not np.isfinite(last):
             continue
         if mode == "session_open":
-            mask = (dates == today) & (minutes >= 9*60+30) & (minutes <= 16*60)
+            mask = (dates == today) & (minutes >= 9*60+30) & (minutes < 16*60)
             if not mask.any():
                 continue
             ref = closes[int(np.flatnonzero(mask)[0])]   # first regular-session bar
         else:  # prev_close
-            prev = np.where((dates < today) & (minutes >= 9*60+30) & (minutes <= 16*60))[0]
+            prev = np.where((dates < today) & (minutes >= 9*60+30) & (minutes < 16*60))[0]
             if prev.size == 0:
                 continue
             previous_day=dates[int(prev[-1])]
-            prior_session=np.where((dates==previous_day)&(minutes>=9*60+30)&(minutes<=16*60))[0]
+            prior_session=np.where((dates==previous_day)&(minutes>=9*60+30)&(minutes<16*60))[0]
             ref = closes[int(prior_session[-1])]         # previous regular-session close
         if np.isfinite(ref) and ref != 0:
             out[sym] = (last / ref - 1.0) * 100.0
@@ -213,7 +213,17 @@ def compute(frames, sectors, benchmark_syms, th, ac, prev_dir, session="regular"
         flow_ratio = (net / gross) if gross > 0 else 0.0
         # density = fraction of the possible window bars that actually traded.
         # Thin pre-market -> low density; regular hours / 24h futures -> ~1.0.
-        density = samples / (counted * th.recent_bars) if counted else 0.0
+        # Density must count valid, nonzero volume within an actual time window,
+        # not merely the number of cached rows (which can span many hours).
+        if present:
+            newest=max(frames[s].index[-1] for s in present)
+            samples=0
+            for symbol in present:
+                tail=frames[symbol].tail(th.recent_bars)
+                age=(newest-tail.index).total_seconds()
+                volumes=tail["volume"].to_numpy(dtype=float)
+                samples+=int(np.sum((age>=0)&(age<th.recent_bars*300)&np.isfinite(volumes)&(volumes>0)))
+        density = samples / (len(present) * th.recent_bars) if present else 0.0
         idx = _weighted_index(frames, present)
         stats.append(FlowStat(
             name=sec.name,

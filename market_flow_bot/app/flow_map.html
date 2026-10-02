@@ -407,7 +407,670 @@ function renderScores(){
 document.querySelectorAll('[data-score-sort]').forEach(b=>b.onclick=()=>{const k=b.dataset.scoreSort;if(SCORE_SORT===k)SCORE_DESC=!SCORE_DESC;else{SCORE_SORT=k;SCORE_DESC=k!=='ticker'&&k!=='sector'}renderScores()});
 document.getElementById('scoreRefresh').onclick=()=>loadActivity(true);
 
-const paperMoney=v=>'$'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2});
+const paperMoney=v=>v==null||!Number.isFinite(Number(v))?'—':'$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
+function renderPaperPending(j){const box=document.getElementById('paperPending'),rows=j.pending||[];if(j.account!=='auto'){box.innerHTML='';return}box.innerHTML=`<h3 style="padding:12px;margin:0">Pending buy confirmation</h3><table class="paper-table"><thead><tr><th>Ticker</th><th>Progress</th><th>Score</th><th>Rel. volume</th><th>First price</th><th>Current</th><th>Price move</th><th>Session / planned buy</th></tr></thead><tbody>${rows.map(p=>{const move=(Number(p.last_price)/Number(p.first_price)-1)*100;return `<tr><td><b>${escHtml(p.ticker)}</b></td><td>${p.confirmations} / ${p.required} scans</td><td>${Number(p.score).toFixed(1)}</td><td>${Number(p.rvol).toFixed(2)}×</td><td>${paperMoney(p.first_price)}</td><td>${paperMoney(p.last_price)}</td><td class="${move>=0?'positive':'negative'}">${move>=0?'+':''}${move.toFixed(2)}%</td><td>${escHtml(p.session)} · ${paperMoney(p.allocation)}</td></tr>`}).join('')||'<tr><td colspan="8">No signals awaiting confirmation.</td></tr>'}</tbody></table>`}
+async function loadPaper(){const account=document.getElementById('paperAccount').value;document.getElementById('manualOrder').hidden=account!=='manual';try{const r=await fetch('api/paper?account='+account,{cache:'no-store'}),j=await r.json();if(!r.ok)throw Error(j.error||'Unavailable');const rr=j.rules||{};document.getElementById('paperSummary').innerHTML=`<span>Equity<br><b>${paperMoney(j.equity)}</b></span><span>Cash<br><b>${paperMoney(j.cash)}</b></span><span>Market value (fresh quotes)<br><b>${paperMoney(j.market_value)}</b></span><span>Unrealised<br><b class="${j.unrealised>=0?'positive':'negative'}">${paperMoney(j.unrealised)}</b></span><span>Realised<br><b class="${j.realised>=0?'positive':'negative'}">${paperMoney(j.realised)}</b></span><span>Winning sale executions<br><b>${j.win_rate==null?'—':j.win_rate+'%'}</b></span>`;document.getElementById('paperRules').innerHTML=`<label><input id="ruleEnabled" type="checkbox" ${rr.enabled?'checked':''}> Automatic strategy enabled</label><label>Buy score ≥<input id="ruleBuy" type="number" value="${rr.buy_score}"></label><label>Exit score ≤ (when profitable)<input id="ruleExit" type="number" value="${rr.score_exit}"></label><label>Regular-hours buy ($)<input id="ruleSize" type="number" value="${rr.position_size}"></label><label>Pre/after-hours buy ($)<input id="ruleExtendedSize" type="number" value="${rr.extended_hours_position_size}"></label><label>Maximum positions<input id="ruleMax" type="number" value="${rr.max_positions}"></label><label>Profit targets (%)<input id="ruleTargets" value="${(rr.targets||[]).join(', ')}"></label><label>Sell fractions (%)<input id="ruleFractions" value="${(rr.target_fractions||[]).map(x=>Math.round(x*10000)/100).join(', ')}"></label><label>Stop loss (%)<input id="ruleStop" type="number" value="${rr.stop_loss_pct}"></label><label>Trailing stop (%)<input id="ruleTrail" type="number" value="${rr.trailing_stop_pct}"></label><label>Re-entry cooldown (hours)<input id="ruleCooldown" type="number" value="${rr.reentry_cooldown_hours}"></label><button class="applybtn" id="saveRules">Save strategy rules</button><span id="ruleMessage"></span>`;document.getElementById('saveRules').onclick=savePaperRules;document.getElementById('paperPositions').innerHTML=`<table class="paper-table"><thead><tr><th>Ticker</th><th>Shares</th><th>Average buy</th><th>Current</th><th>Value</th><th>Return</th><th>Unrealised</th><th>Score</th></tr></thead><tbody>${(j.positions||[]).map(p=>`<tr><td><b>${escHtml(p.ticker)}</b></td><td>${Number(p.shares).toFixed(4)}</td><td>${paperMoney(p.avg_price)}</td><td>${paperMoney(p.current_price)}</td><td>${paperMoney(p.market_value)}</td><td class="${p.return_pct>=0?'positive':'negative'}">${p.return_pct==null?'—':(p.return_pct>=0?'+':'')+p.return_pct+'%'}</td><td class="${p.unrealised>=0?'positive':'negative'}">${paperMoney(p.unrealised)}</td><td>${p.score==null?'—':p.score}</td></tr>`).join('')||'<tr><td colspan="8">No open paper positions.</td></tr>'}</tbody></table>`;document.getElementById('paperEvents').innerHTML=`<h3 style="padding:12px;margin:0">Decision log</h3><table class="paper-table"><thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Shares</th><th>Price</th><th>Score</th><th>Reason</th><th>Realised</th></tr></thead><tbody>${(j.events||[]).map(e=>`<tr><td>${fmtTime(e.ts)}</td><td>${escHtml(e.ticker||'')}</td><td>${escHtml(e.side)}</td><td>${Number(e.shares||0).toFixed(4)}</td><td>${paperMoney(e.price)}</td><td>${e.score==null?'—':e.score}</td><td>${escHtml(e.reason)}</td><td>${paperMoney(e.realised)}</td></tr>`).join('')||'<tr><td colspan="8">No paper decisions yet.</td></tr>'}</tbody></table>`}catch(e){document.getElementById('paperSummary').textContent=e.message}}
+async function savePaperRules(){const payload={account:document.getElementById('paperAccount').value,enabled:document.getElementById('ruleEnabled').checked,buy_score:document.getElementById('ruleBuy').value,score_exit:document.getElementById('ruleExit').value,position_size:document.getElementById('ruleSize').value,extended_hours_position_size:document.getElementById('ruleExtendedSize').value,max_positions:document.getElementById('ruleMax').value,targets:document.getElementById('ruleTargets').value.split(',').map(Number),target_fractions:document.getElementById('ruleFractions').value.split(',').map(x=>Number(x)/100),stop_loss_pct:document.getElementById('ruleStop').value,trailing_stop_pct:document.getElementById('ruleTrail').value,reentry_cooldown_hours:document.getElementById('ruleCooldown').value};const r=await fetch('api/paper/rules',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('ruleMessage').textContent=r.ok?'Saved':j.error||'Save failed';if(r.ok)loadPaper()}
+document.getElementById('paperAccount').onchange=loadPaper;document.getElementById('paperRefresh').onclick=loadPaper;
+function syncManualOrder(){const buy=document.getElementById('orderSide').value==='buy',amount=document.getElementById('orderAmount'),shares=document.getElementById('orderShares');document.getElementById('orderAmountLabel').hidden=!buy;document.getElementById('sharesHint').textContent=buy?'(optional; calculated from spend)':'(required)';shares.placeholder=buy?'calculated from spend':'number to sell';amount.required=buy;shares.required=!buy}
+document.getElementById('orderSide').onchange=syncManualOrder;syncManualOrder();
+document.getElementById('placeOrder').onclick=async()=>{const payload={ticker:document.getElementById('orderTicker').value,side:document.getElementById('orderSide').value,amount:document.getElementById('orderAmount').value,shares:document.getElementById('orderShares').value,price:document.getElementById('orderPrice').value};const r=await fetch('api/paper/order',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('orderMessage').textContent=r.ok?'Mock order completed':j.error||'Order failed';if(r.ok)loadPaper()};
+
+const loadPaperCore=loadPaper;
+loadPaper=async function(){await loadPaperCore();try{const account=document.getElementById('paperAccount').value,r=await fetch('api/paper?account='+account,{cache:'no-store'}),j=await r.json(),rr=j.rules||{},planned=Number(rr.position_size||0)*Number(rr.max_positions||0);renderPaperPending(j);document.getElementById('paperSummary').insertAdjacentHTML('beforeend',`<span>Regular-hours buy<br><b>${paperMoney(rr.position_size)}</b></span><span>Pre/after-hours buy<br><b>${paperMoney(rr.extended_hours_position_size)}</b></span><span>Maximum planned allocation<br><b>${paperMoney(planned)}</b></span><span>Max realised drawdown<br><b class="negative">${paperMoney(j.max_realised_drawdown)}</b></span><span>SPY since tracking<br><b class="${Number(j.spy_return_pct)>=0?'positive':'negative'}">${j.spy_return_pct==null?'Waiting':(j.spy_return_pct>=0?'+':'')+j.spy_return_pct+'%'}</b></span>`);document.getElementById('paperExtraRules').innerHTML=`<label>Regular-hours confirmations<input id="ruleConfirmRegular" type="number" min="1" value="${rr.confirm_regular_scans||2}"></label><label>Pre/after-hours confirmations<input id="ruleConfirmExtended" type="number" min="1" value="${rr.confirm_extended_scans||3}"></label><label>Cancel pending below score<input id="rulePendingCancel" type="number" min="0" max="100" value="${rr.pending_cancel_score||75}"></label><label>Minimum relative volume<input id="ruleConfirmRvol" type="number" min="0" step="0.1" value="${rr.confirmation_min_rvol||1.5}"></label><label>Maximum rise while waiting (%)<input id="rulePendingRise" type="number" min="0" step="0.1" value="${rr.max_pending_price_rise_pct||3}"></label><label>Maximum holding days (0 = off)<input id="ruleMaxDays" type="number" min="0" value="${rr.max_holding_days||0}"></label><label>Days to avoid before earnings (when available)<input id="ruleEarnings" type="number" min="0" value="${rr.avoid_earnings_days||0}"></label><label><input id="ruleOvernight" type="checkbox" ${rr.allow_overnight?'checked':''}> Allow overnight positions</label><div class="activity-detail">A new signal is shown as pending. Its score and unusual volume must persist for the selected number of scans before Mock 1 buys it.</div>`}catch(e){}};
+savePaperRules=async function(){const payload={account:document.getElementById('paperAccount').value,enabled:document.getElementById('ruleEnabled').checked,buy_score:document.getElementById('ruleBuy').value,score_exit:document.getElementById('ruleExit').value,position_size:document.getElementById('ruleSize').value,extended_hours_position_size:document.getElementById('ruleExtendedSize').value,max_positions:document.getElementById('ruleMax').value,targets:document.getElementById('ruleTargets').value.split(',').map(Number),target_fractions:document.getElementById('ruleFractions').value.split(',').map(x=>Number(x)/100),stop_loss_pct:document.getElementById('ruleStop').value,trailing_stop_pct:document.getElementById('ruleTrail').value,reentry_cooldown_hours:document.getElementById('ruleCooldown').value,confirm_regular_scans:document.getElementById('ruleConfirmRegular').value,confirm_extended_scans:document.getElementById('ruleConfirmExtended').value,pending_cancel_score:document.getElementById('rulePendingCancel').value,confirmation_min_rvol:document.getElementById('ruleConfirmRvol').value,max_pending_price_rise_pct:document.getElementById('rulePendingRise').value,max_holding_days:document.getElementById('ruleMaxDays').value,avoid_earnings_days:document.getElementById('ruleEarnings').value,allow_overnight:document.getElementById('ruleOvernight').checked};const r=await fetch('api/paper/rules',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('ruleMessage').textContent=r.ok?'Saved':j.error||'Save failed';if(r.ok)loadPaper()};
+document.getElementById('paperAccount').onchange=loadPaper;document.getElementById('paperRefresh').onclick=loadPaper;
+
+function renderStatus(){
+  const dot=document.getElementById('hdot'), txt=document.getElementById('statustxt');
+  const p=STATUS.total?STATUS.fetched/STATUS.total:0;
+  const hcol = p>=0.97?"var(--in)":p>=0.88?"#e0a83c":"var(--out)";
+  if(LOADING){ dot.style.background="var(--accent)"; txt.textContent=`${currentPeriod} · computing…`; return; }
+  if(currentPeriod==='Live'){
+    if(!LIVE_DATA){ dot.style.background="var(--muted)"; txt.textContent="Live · waiting for the bot's first cycle…"; return; }
+    dot.style.background=hcol;
+    const shown=fmtTime(STATUS.updated);
+    const ago=Math.max(0,Math.round((Date.now()-STATUS.updated)/60000));
+    txt.textContent=`● LIVE · ${STATUS.fetched}/${STATUS.total} symbols · updated ${shown} (${ago<1?"just now":ago+" min ago"})`
+                     + (STATUS.stale?" · data delayed":"");
+    return;
+  }
+  if(!current || !current.length){ dot.style.background="var(--muted)"; txt.textContent=`${currentPeriod} · ${PERIOD_ERR?("error: "+PERIOD_ERR):"no data"}`; return; }
+  dot.style.background=hcol;
+  txt.textContent=`${currentPeriod} · net flow over window · ${STATUS.fetched}/${STATUS.total} symbols`
+                   + (STATUS.stale ? " · refreshing…" : "");
+}
+
+/* ---- period selector ----
+   Tab order: 1d first (and the default view), then Live, then the rest. */
+const PERIODS=['1d','Live','1h','3h','6h','3d','1w','2w','1m','3m','6m','1y','2y','3y','5y'];
+// the 11 GICS sectors — the hub total sums ONLY these, because the theme
+// baskets (AI-Infra, Software, metals, miners) overlap them and would be
+// double-counted (NVDA is in both Technology and AI-Infra).
+const GICS=new Set(['Technology','Financials','Energy','Health Care','Industrials',
+  'Consumer Discretionary','Consumer Staples','Utilities','Materials','Real Estate','Communication Services']);
+let currentPeriod='1d';
+let currentKey='1d';
+let current=[];
+let LIVE_DATA=null, LIVE_STATUS=null, LOADING=false;
+let PERIOD_ERR=null;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* setPeriod(key, label, silent)
+   silent=true -> refresh in place without wiping the current map to a spinner
+   (used by the background auto-refresh of whatever period is on screen). */
+async function setPeriod(key,label,silent){
+  currentPeriod=label||key; currentKey=key;
+  document.getElementById('prevbanner').hidden=true;
+  document.querySelectorAll('#pills .pill').forEach(el=>el.classList.toggle('on', el.dataset.k===key));
+  if(key==='Live'){
+    LOADING=false;
+    current = LIVE_DATA || [];
+    if(LIVE_DATA && LIVE_STATUS) Object.assign(STATUS, LIVE_STATUS);
+    render(); renderStatus(); return;
+  }
+  // historical window (or custom "from_to") -> read the backend's cached snapshot.
+  const myPeriod = label||key;
+  if(!silent){ LOADING=true; current=[]; PERIOD_ERR=null; render(); renderStatus(); }
+  const url = key.includes('_')
+    ? `api/flow?from=${key.split('_')[0]}&to=${key.split('_')[1]}`
+    : `api/flow?period=${encodeURIComponent(key)}`;
+  let tries=0;
+  while(true){
+    tries++;
+    let j;
+    try{
+      const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(), 20000);
+      const r=await fetch(url,{cache:'no-store',signal:ctrl.signal});
+      j=await r.json(); clearTimeout(to);
+    }catch(e){
+      if(currentPeriod!==myPeriod) return;         // user switched away
+      if(silent){ renderStatus(); return; }         // keep old data on a silent refresh
+      LOADING=false; current=[]; PERIOD_ERR="request timed out — tap again"; render(); renderStatus(); return;
+    }
+    if(currentPeriod!==myPeriod) return;            // user switched away while waiting
+    // backend still computing this window for the first time -> poll a few times
+    if(j.pending){
+      if(silent) return;                            // don't nag during background refresh
+      if(tries>=20){ LOADING=false; current=[]; PERIOD_ERR="still computing — tap again in a moment"; render(); renderStatus(); return; }
+      LOADING=true; renderStatus();                 // keep the honest "computing…" state
+      await sleep(3000); continue;
+    }
+    LOADING=false;
+    if(j.error || !j.sectors || !j.sectors.length){
+      if(silent) return;                            // keep old data rather than blanking
+      current=[]; PERIOD_ERR=j.error||null; render(); renderStatus(); return;
+    }
+    PERIOD_ERR=null;
+    current=j.sectors.map(x=>({name:x.sector, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1)}));
+    STATUS={fetched:j.fetched, total:j.total_symbols, updated:Date.parse(j.updated)||Date.now(), stale:!!j.stale};
+    render(); renderStatus();
+    return;
+  }
+}
+
+/* keep whatever non-Live period is on screen quietly up to date */
+async function refreshCurrent(){
+  if(VIEW!=='main' || currentKey==='Live' || LOADING) return;
+  setPeriod(currentKey, currentPeriod, true);
+}
+
+
+function escHtml(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+/* ---- economic calendar: day navigation + importance (dot) filter ----
+   EV_LEVEL is the minimum importance shown: 3 = high only, 2 = medium+high,
+   1 = everything. Days are scrolled with the ‹ › arrows. */
+let EVENTS=[], EV_UPDATED=null, EV_ACTUAL_CHECKED=null, EV_DIAGNOSTICS={}, EV_DAYS=[], EV_DAYIDX=0, EV_LEVEL=3;
+
+const _dayKey=d=>{const p=_parts(d,{year:'numeric',month:'2-digit',day:'2-digit'});return _part(p,'year')+'-'+_part(p,'month')+'-'+_part(p,'day');};
+const _todayKey=()=>_dayKey(Date.now());
+function _dayLabel(key){
+  const [y,m,d]=key.split('-').map(Number); const dt=new Date(Date.UTC(y,m-1,d,12));
+  const tk=_todayKey(), tmr=_dayKey(Date.now()+864e5), ytd=_dayKey(Date.now()-864e5);
+  const rel = key===tk?'Today' : key===tmr?'Tomorrow' : key===ytd?'Yesterday' : '';
+  const wd=dt.toLocaleDateString('en-GB', {timeZone:'UTC',weekday:'long'});
+  const dd=dt.toLocaleDateString('en-GB', {timeZone:'UTC',month:'short', day:'numeric'});
+  return {top: rel||wd, bot: rel?`${wd} · ${dd}`:dd};
+}
+
+function renderEvents(){
+  const list=document.getElementById('evList'), dayEl=document.getElementById('evDay'), foot=document.getElementById('evFoot');
+  const prev=document.getElementById('evPrev'), next=document.getElementById('evNext');
+  document.querySelectorAll('#evImp .imp').forEach(b=>b.classList.toggle('on', +b.dataset.lvl===EV_LEVEL));
+  if(EVENTS===null){ list.innerHTML='<div class="ev-empty">calendar unavailable</div>'; dayEl.textContent='Events'; foot.textContent=''; prev.disabled=next.disabled=true; return; }
+  if(!EV_DAYS.length){ list.innerHTML='<div class="ev-empty">No US events scheduled.</div>'; dayEl.textContent='Events'; foot.textContent=''; prev.disabled=next.disabled=true; return; }
+  EV_DAYIDX=Math.max(0,Math.min(EV_DAYIDX,EV_DAYS.length-1));
+  prev.disabled=EV_DAYIDX<=0; next.disabled=EV_DAYIDX>=EV_DAYS.length-1;
+  const key=EV_DAYS[EV_DAYIDX], lab=_dayLabel(key);
+  dayEl.innerHTML=`${escHtml(lab.top)}<small>${escHtml(lab.bot)}</small>`;
+  const now=Date.now();
+  const rows=EVENTS.filter(e=>e.datetime_utc && _dayKey(e.datetime_utc)===key && (e.level||3)>=EV_LEVEL);
+  if(!rows.length){
+    const tier=EV_LEVEL===3?'high-impact ':EV_LEVEL===2?'medium/high ':'';
+    list.innerHTML=`<div class="ev-empty">No ${tier}events this day.</div>`;
+    foot.textContent = EV_UPDATED?("calendar updated "+fmtTime(EV_UPDATED)+(EV_ACTUAL_CHECKED?" · actuals checked "+fmtTime(EV_ACTUAL_CHECKED):"")+(EV_DIAGNOSTICS.last_error?" · ERROR: "+EV_DIAGNOSTICS.last_error:"")+" · "+APP_TZ):"";
+    return;
+  }
+  const nextIdx=(key===_todayKey())?rows.findIndex(e=>Date.parse(e.datetime_utc)>now):-1;
+  const fld=(k,v,cls)=>`<div class="f"><div class="k">${k}</div><div class="v ${cls||''}">${v?escHtml(v):'—'}</div></div>`;
+  list.innerHTML=rows.map((e,i)=>{
+    const shown=fmtTime(e.datetime_utc);
+    const lvl=e.level||3;
+    const fap=`<div class="ev-fap">${fld('Forecast',e.forecast)}${fld('Actual',e.actual,e.actual?'act':'dim')}${fld('Previous',e.previous)}</div>`;
+    return `<div class="ev-row ${i===nextIdx?'next':''}">`
+      +`<div class="ev-time">${shown}</div>`
+      +`<div style="min-width:0;flex:1 1 auto"><div class="ev-title">${escHtml(e.title)}<span class="ev-dots l${lvl}">${'•'.repeat(lvl)}</span></div>${fap}</div>`
+      +`</div>`;
+  }).join("");
+  foot.textContent = EV_UPDATED ? ("calendar updated "+fmtTime(EV_UPDATED)+(EV_ACTUAL_CHECKED?" · actuals checked "+fmtTime(EV_ACTUAL_CHECKED):"")+(EV_DIAGNOSTICS.last_error?" · ERROR: "+EV_DIAGNOSTICS.last_error:"")+" · "+APP_TZ) : "";
+}
+
+async function loadEvents(force){
+  const btn=document.getElementById('evRefresh');
+  if(force && btn){ btn.disabled=true; btn.classList.add('spin'); }
+  try{
+    const r=await fetch('api/events'+(force?'?refresh=1':''),{cache:'no-store'}); const j=await r.json();
+    const prevKey = EV_DAYS.length ? EV_DAYS[EV_DAYIDX] : null;   // keep the day the user is on
+    EVENTS=j.events||[]; EV_UPDATED=j.updated||null; EV_ACTUAL_CHECKED=j.actual_checked||null; EV_DIAGNOSTICS=j.diagnostics||{};
+    EV_DAYS=[...new Set(EVENTS.filter(e=>e.datetime_utc).map(e=>_dayKey(e.datetime_utc)))].sort();
+    let idx = prevKey ? EV_DAYS.indexOf(prevKey) : -1;
+    if(idx<0){ const tk=_todayKey(); idx=EV_DAYS.indexOf(tk); if(idx<0) idx=EV_DAYS.findIndex(d=>d>=tk); }
+    EV_DAYIDX = idx<0 ? Math.max(0,EV_DAYS.length-1) : idx;
+    renderEvents();
+  }catch(e){ EVENTS=null; renderEvents(); }
+  finally{ if(btn){ btn.disabled=false; btn.classList.remove('spin'); } }
+}
+document.getElementById('evPrev').onclick=()=>{ if(EV_DAYIDX>0){EV_DAYIDX--; renderEvents();} };
+document.getElementById('evNext').onclick=()=>{ if(EV_DAYIDX<EV_DAYS.length-1){EV_DAYIDX++; renderEvents();} };
+document.getElementById('evRefresh').onclick=()=>loadEvents(true);
+document.querySelectorAll('#evImp .imp').forEach(b=>b.onclick=()=>{ EV_LEVEL=+b.dataset.lvl; renderEvents(); });
+
+
+let VIEW='main', SECTOR_NAME=null, SECTOR_DATA=[], SECTOR_KEY='1d', SECTOR_SEL=null, SECTOR_SORT='flow', SECTOR_UPDATED=null;
+
+/* the drill-down gets its own period tabs, so you can switch the window for a
+   single sector without leaving it. Defaults to the tab you came in on, but if
+   that's Live (empty after the close) it opens on 1d so there's data to see. */
+function buildSectorPills(){
+  const box=document.getElementById('sectorPills'); box.innerHTML='';
+  PERIODS.forEach(k=>{
+    const b=document.createElement('button');
+    b.className='pill'; b.dataset.k=k; b.textContent=k;
+    b.onclick=()=>openSector(SECTOR_NAME, k);
+    box.appendChild(b);
+  });
+}
+
+function _abbrev(name){
+  const parts=(name||'').trim().split(/\s+/);
+  if(parts.length>1) return parts.map(p=>p[0]).join('').slice(0,4).toUpperCase();
+  return (name||'').slice(0,4).toUpperCase();
+}
+function _distPct(s){ return (s.mp!=null && s.last!=null && s.mp>0) ? (s.last-s.mp)/s.mp*100 : null; }
+function _daysTo(exp){ if(!exp) return null; const d=Math.ceil((new Date(exp+'T00:00:00')-Date.now())/864e5); return isNaN(d)?null:d; }
+function _sortRows(rows){
+  const a=[...rows];
+  if(SECTOR_SORT==='flow') a.sort((x,y)=>y.flow-x.flow);
+  else if(SECTOR_SORT==='distance') a.sort((x,y)=>(Math.abs(_distPct(y)??-1))-(Math.abs(_distPct(x)??-1)));
+  else if(SECTOR_SORT==='money') a.sort((x,y)=>y.total-x.total);
+  else if(SECTOR_SORT==='ticker') a.sort((x,y)=>x.name<y.name?-1:1);
+  return a;
+}
+
+async function openSector(name, key){
+  VIEW='sector'; SECTOR_NAME=name;
+  if(key) SECTOR_KEY=key;
+  else SECTOR_KEY = (currentKey==='Live') ? '1d' : currentKey;   // first open: inherit the main tab
+  // swap main view for the drill-down panels
+  document.getElementById('controls').style.display='none';
+  document.getElementById('daterow').hidden=true;
+  document.querySelector('.mainrow').style.display='none';
+  document.querySelectorAll('.legend,.note').forEach(e=>e.style.display='none');
+  document.getElementById('sectorView').classList.add('on');
+  const sc=document.getElementById('sectorControls'); if(sc) sc.style.display='';
+  document.querySelectorAll('#sectorPills .pill').forEach(el=>el.classList.toggle('on', el.dataset.k===SECTOR_KEY));
+  document.getElementById('backBtn').style.display='';
+  document.getElementById('h1').textContent=name;
+  document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · loading…`;
+  document.getElementById('secDetail').innerHTML='<div class="sd-name">loading…</div>';
+  document.getElementById('secList').innerHTML=''; document.getElementById('secSvg').innerHTML='';
+  try{
+    const q = SECTOR_KEY.includes('_')
+      ? `&from=${SECTOR_KEY.split('_')[0]}&to=${SECTOR_KEY.split('_')[1]}`
+      : `&period=${encodeURIComponent(SECTOR_KEY)}`;
+    const r=await fetch('api/sector?name='+encodeURIComponent(name)+q,{cache:'no-store'});
+    const j=await r.json();
+    if(VIEW!=='sector' || SECTOR_NAME!==name) return;         // user left / switched sector
+    if(j.error || !j.stocks || !j.stocks.length){
+      document.getElementById('secDetail').innerHTML='<div class="sd-name">no data for this window</div>';
+      document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · no data`; return;
+    }
+    SECTOR_DATA=j.stocks.map(x=>({name:x.ticker, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1),
+      last:x.last, mp:x.maxpain, mpSpot:x.maxpain_spot, mpExp:x.maxpain_expiry, mpAt:x.maxpain_at,
+      vsLast:x.maxpain_vs_last, vs1d:x.maxpain_vs_1d, vs1w:x.maxpain_vs_1w}));
+    SECTOR_UPDATED=j.updated||null;
+    // keep the current selection if it still exists, else pick the strongest-flow name
+    const top=[...SECTOR_DATA].sort((a,b)=>b.flow-a.flow)[0];
+    if(!SECTOR_DATA.some(s=>s.name===SECTOR_SEL)) SECTOR_SEL = top?top.name:null;
+    renderSector();
+    const upd=SECTOR_UPDATED||null;
+    document.getElementById('statustxt').textContent=`${name} · ${SECTOR_KEY} · ${SECTOR_DATA.length} stocks`+(upd?` · updated ${fmtTime(upd)}`:'');
+    document.getElementById('hdot').style.background='var(--in)';
+  }catch(e){
+    document.getElementById('secDetail').innerHTML='<div class="sd-name">fetch failed</div>';
+    document.getElementById('statustxt').textContent=name+' · fetch failed';
+  }
+}
+// add a ticker to the current sector's runtime watchlist (no config edit needed)
+async function addTicker(){
+  const inp=document.getElementById('addTk'), btn=document.getElementById('addTkBtn');
+  const t=(inp.value||'').trim().toUpperCase().replace(/[^A-Z0-9.=-]/g,'');
+  if(!t || !SECTOR_NAME) return;
+  btn.disabled=true;
+  try{
+    await fetch(`api/watch?sector=${encodeURIComponent(SECTOR_NAME)}&add=${encodeURIComponent(t)}`,{cache:'no-store'});
+    inp.value='';
+    document.getElementById('statustxt').textContent=`${SECTOR_NAME} · added ${t} — it starts fetching from Yahoo next cycle (~15 min)`;
+  }catch(e){ document.getElementById('statustxt').textContent='couldn’t add ticker'; }
+  finally{ btn.disabled=false; }
+}
+document.getElementById('addTkBtn').onclick=addTicker;
+document.getElementById('addTk').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addTicker(); } });
+
+function selectStock(t){ SECTOR_SEL=t; renderSector(); }
+
+function renderSector(){ renderSecDetail(); renderSecRadial(); renderSecList(); }
+
+const POLITICIAN_CACHE = new Map();
+const FUNDAMENTALS_CACHE = new Map();
+
+function renderSecDetail(){
+  const box=document.getElementById('secDetail');
+  const s=SECTOR_DATA.find(x=>x.name===SECTOR_SEL);
+  if(!s){ box.innerHTML=''; return; }
+  const spot = s.last!=null ? ('$'+s.last) : '—';
+  const hasPin = s.mp!=null;
+  const dist=_distPct(s), days=_daysTo(s.mpExp);
+  const distStr = dist==null?'—':(dist>=0?'+':'')+dist.toFixed(1)+'%';
+  const distCls = dist==null?'':(dist>=0?'up':'down');
+  const flowStr=(s.flow>=0?'+':'')+s.flow.toFixed(2);
+  let note='';
+  if(hasPin && dist!=null){
+    if(dist>0.05) note=`Price ${dist.toFixed(1)}% above the pin — this is not a forecast or price target.`;
+    else if(dist<-0.05) note=`Price ${Math.abs(dist).toFixed(1)}% below the pin — this is not a forecast or price target.`;
+    else note=`Price sitting right on the pin.`;
+  }
+  const hist=(label,v)=>{
+    if(v==null) return `<div class="sd-hist"><span class="k">${label}</span><span class="v">—</span></div>`;
+    const cls=v>0?'up':v<0?'down':'', arw=v>0?'▲':v<0?'▼':'•', val=(v>0?'+':'')+(Math.round(v*100)/100);
+    return `<div class="sd-hist"><span class="k">${label}</span><span class="v ${cls}">${arw} ${val}</span></div>`;
+  };
+  const calc = s.mpAt||null;
+  box.innerHTML =
+    `<div class="sd-tkr">${escHtml(s.name)} <span>${spot}</span></div>`+
+    `<div class="sd-company" id="companyName">Loading company name…</div>`+
+    `<div class="sd-name">Flow (${SECTOR_KEY}) <b class="${s.flow>=0?'up':'down'}">${flowStr}</b> · net ${fmtCash(s.cash)}</div>`+
+    `<div id="fundamentals" class="sd-fund"><div class="sd-metric"><span class="k">Valuation</span><span class="v">Loading…</span></div></div>`+
+    (hasPin
+      ? `<div class="sd-pin"><div class="k">Max pain${s.mpExp?(' · '+s.mpExp):''}</div><div class="v">$${s.mp}</div></div>`
+      : `<div class="sd-pin"><div class="k">Max pain</div><div class="v" style="font-size:15px;color:var(--muted);font-weight:600">computing…</div></div>`)+
+    `<div class="sd-row"><span class="k">Spot</span><span class="v">${spot}</span></div>`+
+    `<div class="sd-row"><span class="k">Distance to pin</span><span class="v ${distCls}">${distStr}</span></div>`+
+    `<div class="sd-row"><span class="k">Expiry</span><span class="v">${s.mpExp||'—'}${days!=null?` · ${days}d`:''}</span></div>`+
+    (note?`<div class="sd-note">${note}</div>`:'')+
+    `<div class="sd-hist-h">Max-pain history</div>`+
+    hist('vs last calc', s.vsLast)+hist('vs 1 day ago', s.vs1d)+hist('vs 1 week ago', s.vs1w)+
+    (calc?`<div class="sd-foot">calculated ${fmtTime(calc)} · ${escHtml(APP_TZ)} · held until next refresh</div>`:'') + `<div id="politicianTrades" style="border-top:1px solid var(--line);margin-top:18px;padding-top:14px"><b>Politician trades</b><div class="sd-foot">Loading disclosures…</div></div>`;
+  loadFundamentals(s.name);
+  loadPoliticianTrades(s.name);
+}
+
+function fmtLargeNumber(v,currency){
+  if(v===null||v===undefined||v===''||!Number.isFinite(Number(v)))return '—';
+  const n=Number(v),a=Math.abs(n),unit=a>=1e12?'T':a>=1e9?'B':a>=1e6?'M':'',div=unit==='T'?1e12:unit==='B'?1e9:unit==='M'?1e6:1;
+  return (currency==='USD'?'$':currency==='GBP'?'£':currency==='EUR'?'€':'')+(n/div).toFixed(unit?1:0)+unit;
+}
+function metric(k,v){return `<div class="sd-metric"><span class="k">${escHtml(k)}</span><span class="v">${escHtml(v)}</span></div>`}
+async function loadFundamentals(ticker){
+  let entry=FUNDAMENTALS_CACHE.get(ticker);
+  const ttl=entry&&entry.data&&entry.data.pending?5000:3600000;
+  if(!entry||Date.now()-entry.time>ttl){
+    const promise=fetch('api/fundamentals?ticker='+encodeURIComponent(ticker),{cache:'no-store'}).then(r=>r.json()).catch(()=>({ticker,pending:true,error:'unavailable'}));
+    entry={time:Date.now(),promise,data:null};FUNDAMENTALS_CACHE.set(ticker,entry);
+    promise.then(data=>entry.data=data);
+  }
+  const f=await entry.promise;
+  if(VIEW!=='sector'||SECTOR_SEL!==ticker)return;
+  const name=document.getElementById('companyName'),box=document.getElementById('fundamentals');if(!name||!box)return;
+  name.textContent=f.name||ticker;
+  if(f.pending&&!f.name){box.innerHTML=metric('Valuation','Loading…');setTimeout(()=>{if(VIEW==='sector'&&SECTOR_SEL===ticker)loadFundamentals(ticker)},5500);return;}
+  const valid=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+  const ratio=v=>valid(v)?Number(v).toFixed(1)+'×':'—';
+  const pct=v=>valid(v)?(Number(v)*100).toFixed(1)+'%':'—';
+  const range=valid(f.week_52_low)&&valid(f.week_52_high)?'$'+Number(f.week_52_low).toFixed(2)+' – $'+Number(f.week_52_high).toFixed(2):'—';
+  box.innerHTML=metric('Market cap',fmtLargeNumber(f.market_cap,f.currency))+metric('Trailing P/E',ratio(f.trailing_pe))+
+    metric('Forward P/E',ratio(f.forward_pe))+metric('Price / book',ratio(f.price_to_book))+
+    metric('Profit margin',pct(f.profit_margin))+metric('Revenue growth',pct(f.revenue_growth))+
+    metric('52-week range',range)+metric('Currency',f.currency||'—');
+}
+
+
+async function loadPoliticianTrades(ticker){
+  let entry=POLITICIAN_CACHE.get(ticker);
+  const hasPending=entry&&entry.data&&((entry.data.trades||[]).some(t=>t.price_pending));
+  const ttl=hasPending?5000:60000;
+  if(!entry || Date.now()-entry.time>ttl){
+    const promise=fetch('api/politician-trades?ticker='+encodeURIComponent(ticker),{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('Unavailable');return r.json()}).catch(()=>({available:false,error:'Tracker unavailable',trades:[]}));
+    entry={time:Date.now(),promise,data:null}; POLITICIAN_CACHE.set(ticker,entry);promise.then(data=>entry.data=data);
+  }
+  const j=await entry.promise;
+  if(VIEW!=='sector'||SECTOR_SEL!==ticker)return;
+  const box=document.getElementById('politicianTrades'); if(!box)return;
+  const openKeys=new Set([...box.querySelectorAll('details[open][data-key]')].map(el=>el.dataset.key));
+  const heading='<b>Politician trades</b>';
+  if(!j.available){box.innerHTML=heading+'<div class="sd-note">'+escHtml(j.error||'Data unavailable')+'</div>';return;}
+  const status=j.status||{},h=status.house||{},sen=status.senate||{},counts=status.house_reports||{};
+  const coverage=`House: ${h.state||'starting'} · ${counts.pending||0} reports pending. Senate: ${sen.state||'not configured'}.`;
+  const rows=j.trades||[],groups=j.disclosures||[];
+  const safeLink=v=>{try{const u=new URL(v);return u.protocol==='https:'?u.href:''}catch{return ''}};
+  const hasNumber=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+  const money=v=>hasNumber(v)?'$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0}):'—';
+  const politicianProfile=g=>{const p=g.profile||{},areas=(p.responsibilities||[]).join('; '),committees=(p.committees||[]).map(c=>(c.leadership?c.leadership+' — ':'')+c.name).join(' · ');return `<div class="sd-foot">${escHtml(p.title||g.chamber)}</div>`+(areas||committees?`<div class="sd-note"><b>Current official role</b>${areas?`<br>Relevant oversight: ${escHtml(areas)}`:''}${committees?`<br>Committees: ${escHtml(committees)}`:''}</div>`:'');};
+  box.innerHTML=heading+'<div class="sd-foot">'+escHtml(coverage)+'</div><div class="sd-foot">Reported ranges · latest disclosures, independent of the flow period.</div>'+
+    (groups.length?groups.map((g,i)=>{const sc=g.score||{},key=encodeURIComponent(g.politician)+'|'+g.disclosure_date,filing=hasNumber(g.estimated_value)?((g.value_open_ended?'at least ':'about ')+money(g.estimated_value)):'unavailable';return `<details data-key="${escHtml(key)}" ${openKeys.has(key)?'open':''} style="padding:10px 0;border-bottom:1px solid var(--line)"><summary><b>${escHtml(g.politician)}</b><div class="sd-foot" style="display:inline;margin-left:5px">${escHtml(g.disclosure_date)} · ${g.trade_count} trade${g.trade_count===1?'':'s'} · est. ${filing} · score ${hasNumber(sc.score)?Number(sc.score).toFixed(1):'—'}</div></summary>${politicianProfile(g)}${g.trades.map(t=>{const link=safeLink(t.source_url),dr=hasNumber(t.directional_return_pct)?((Number(t.directional_return_pct)>0?'+':'')+Number(t.directional_return_pct).toFixed(2)+'%'):'pricing…',position=hasNumber(t.estimated_value)?money(t.estimated_value):'unavailable';return `<div style="padding:10px 3px;border-top:1px solid var(--line);margin-top:7px"><b class="${t.action==='Buy'?'up':t.action==='Sell'?'down':''}">${escHtml(t.action)}</b> · ${escHtml(t.amount)} · estimated value ${position}<div class="sd-foot">Trade: ${escHtml(t.transaction_date)} · estimated close: ${hasNumber(t.estimated_price)?'$'+Number(t.estimated_price).toFixed(2):'pricing…'}<br>Latest: ${hasNumber(t.current_price)?'$'+Number(t.current_price).toFixed(2):'pricing…'} · direction-adjusted: ${escHtml(dr)}<br>${escHtml(t.owner)} · ${escHtml(t.asset_type)}</div>${link?`<a style="color:var(--accent);font-size:12px" href="${escHtml(link)}" target="_blank" rel="noopener noreferrer">Original disclosure ↗</a>`:''}</div>`}).join('')}</details>`}).join(''):'<div class="sd-note">No matching disclosures in the records collected so far. Coverage may be incomplete.</div>')+
+    `<div class="sd-foot">Showing ${rows.length} of ${j.total||0}. Open Politician Trades in the sidebar to search all records. Amendments may appear separately.</div>`;
+  if(rows.some(t=>t.price_pending))setTimeout(()=>{if(VIEW==='sector'&&SECTOR_SEL===ticker)loadPoliticianTrades(ticker)},5500);
+}
+
+function renderSecList(){
+  const box=document.getElementById('secList');
+  const rows=_sortRows(SECTOR_DATA);
+  const opt=(v,l)=>`<option value="${v}" ${SECTOR_SORT===v?'selected':''}>${l}</option>`;
+  let html=`<div class="sl-head"><span>All stocks</span><select class="sl-sort" id="slSort">`+
+    opt('flow','sort: flow')+opt('distance','sort: distance')+opt('money','sort: money')+opt('ticker','sort: ticker')+`</select></div>`;
+  html+=rows.map(s=>{
+    const dist=_distPct(s);
+    const distStr=dist==null?'—':(dist>=0?'+':'')+dist.toFixed(1)+'%';
+    const distCls=dist==null?'':(dist>=0?'up':'down');
+    return `<div class="sl-row ${s.name===SECTOR_SEL?'sel':''}" data-t="${escHtml(s.name)}">`+
+      `<div><div class="sl-tkr">${escHtml(s.name)}</div><div class="sl-sub">${s.last!=null?'$'+s.last:'—'}</div></div>`+
+      `<div class="sl-right"><div class="sl-chg ${distCls}">${distStr}</div><div class="sl-pin">${s.mp!=null?'pin $'+s.mp:'pin —'}</div></div>`+
+      `</div>`;
+  }).join('');
+  box.innerHTML=html;
+  box.querySelectorAll('.sl-row').forEach(el=>el.onclick=()=>selectStock(el.dataset.t));
+  const sel=document.getElementById('slSort'); if(sel) sel.onchange=()=>{ SECTOR_SORT=sel.value; renderSecList(); };
+}
+
+function renderSecRadial(){
+  const svg=document.getElementById('secSvg'); svg.innerHTML='';
+  const rows=[...SECTOR_DATA].sort((a,b)=>b.flow-a.flow);
+  const n=rows.length; if(!n) return;
+  const CX=500, CY=500, R=352, HUBR=76;
+  const defs=el('defs');
+  [['sin','var(--in)'],['sout','var(--out)']].forEach(([id,col])=>{
+    const m=el('marker',{id,viewBox:'0 0 10 10',refX:'8',refY:'5',markerWidth:'7',markerHeight:'7',orient:'auto-start-reverse'});
+    m.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:col})); defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+  rows.forEach((d,i)=>{
+    const ang=(-90+i*(360/n))*Math.PI/180, dx=Math.cos(ang), dy=Math.sin(ang);
+    const inflow=d.flow>=0, col=inflow?'var(--in)':'var(--out)', sel=d.name===SECTOR_SEL;
+    const x0=CX+dx*(HUBR+6), y0=CY+dy*(HUBR+6), nx=CX+dx*R, ny=CY+dy*R;
+    const w=2+Math.abs(d.flow)*7;
+    const g=el('g',{style:'cursor:pointer'}); g.dataset.t=d.name;
+    const a=inflow?[x0,y0]:[nx,ny], b=inflow?[nx,ny]:[x0,y0];
+    g.appendChild(el('line',{x1:a[0],y1:a[1],x2:b[0],y2:b[1],stroke:col,'stroke-width':w,
+      'stroke-opacity':sel?0.95:0.45,'marker-end':`url(#${inflow?'sin':'sout'})`,'stroke-linecap':'round'}));
+    const mx=CX+dx*(R*0.5), my=CY+dy*(R*0.5);
+    let rot=ang*180/Math.PI; if(rot>90||rot<-90) rot+=180;
+    const lbl=el('text',{x:mx,y:my,'text-anchor':'middle',fill:col,'font-size':'16','font-weight':'800',
+      transform:`rotate(${rot} ${mx} ${my})`,style:'paint-order:stroke;stroke:var(--bg);stroke-width:3.5px;stroke-linejoin:round'});
+    lbl.textContent=(d.flow>=0?'+':'')+d.flow.toFixed(2); g.appendChild(lbl);
+    g.appendChild(el('circle',{cx:nx,cy:ny,r:sel?16:11,fill:sel?col:'var(--panel)',stroke:col,'stroke-width':sel?3.5:2.5}));
+    // ticker only (price/pin live in the list on the right — keeps the wheel legible even at 30 names)
+    const right=dx>=0, anchor=Math.abs(dx)<0.22?'middle':(right?'start':'end');
+    const lx=CX+dx*(R+26), ly=CY+dy*(R+26);
+    const tk=el('text',{x:lx,y:ly+5,'text-anchor':anchor,'font-size':'18','font-weight':'800',
+      fill:sel?col:'var(--ink)',style:'paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round'});
+    tk.textContent=d.name; g.appendChild(tk);
+    g.addEventListener('click',()=>selectStock(d.name));
+    svg.appendChild(g);
+  });
+  svg.appendChild(el('circle',{cx:CX,cy:CY,r:HUBR,class:'hub'}));
+  const h=el('text',{x:CX,y:CY+8,'text-anchor':'middle',fill:'var(--hubink)','font-size':'26','font-weight':'800'});
+  h.textContent=_abbrev(SECTOR_NAME); svg.appendChild(h);
+}
+
+function backToMain(){
+  VIEW='main'; SECTOR_NAME=null;
+  document.getElementById('controls').style.display='';
+  const sc=document.getElementById('sectorControls'); if(sc) sc.style.display='none';
+  document.getElementById('sectorView').classList.remove('on');
+  document.querySelector('.mainrow').style.display='';
+  document.querySelectorAll('.legend,.note').forEach(e=>e.style.display='');
+  document.getElementById('backBtn').style.display='none';
+  document.getElementById('h1').textContent='Market Flow Map';
+  render(); renderStatus();
+}
+
+async function loadLive(){
+  try{
+    const r=await fetch('api/flow',{cache:'no-store'});
+    if(!r.ok) return;
+    const j=await r.json();
+    if(j && j.sectors && j.sectors.length){
+      LIVE_DATA=j.sectors.map(x=>({name:x.sector, flow:x.flow, cash:x.net_dollar||0, total:Math.max(1,x.gross||1)}));
+      LIVE_STATUS={fetched:j.fetched, total:j.total_symbols, updated:Date.parse(j.updated)||Date.now(), stale:!!j.stale};
+      if(currentPeriod==='Live' && VIEW==='main') setPeriod('Live');
+    }
+  }catch(e){}
+}
+
+function buildPills(){
+  const box=document.getElementById('pills'); box.innerHTML='';
+  PERIODS.forEach(k=>{
+    const b=document.createElement('button');
+    b.className='pill'; b.dataset.k=k; b.textContent=k;
+    b.onclick=()=>{document.getElementById('daterow').hidden=true; setPeriod(k);};
+    box.appendChild(b);
+  });
+}
+
+// custom date range
+document.getElementById('customBtn').onclick=()=>{
+  const r=document.getElementById('daterow'); r.hidden=!r.hidden;
+};
+document.getElementById('applyBtn').onclick=()=>{
+  const f=document.getElementById('fromD').value, t=document.getElementById('toD').value;
+  if(!f||!t){return;}
+  document.querySelectorAll('#pills .pill').forEach(el=>el.classList.remove('on'));
+  setPeriod(`${f}_${t}`, `${f} → ${t}`);
+};
+
+const CX=500, CY=500, R=315, HUBR=92;
+const svg=document.getElementById('svg');
+const SVGNS="http://www.w3.org/2000/svg";
+const el=(n,a={})=>{const e=document.createElementNS(SVGNS,n);for(const k in a)e.setAttribute(k,a[k]);return e;};
+
+function fmtCash(v){
+  const s=v>=0?"+":"−"; const a=Math.abs(v);
+  if(a>=1e9) return s+"$"+(a/1e9).toFixed(1)+"B";
+  if(a>=1e6) return s+"$"+(a/1e6).toFixed(0)+"M";
+  return s+"$"+a.toFixed(0);
+}
+function fmtFlow(v){return (v>=0?"+":"")+v.toFixed(2);}
+function fmtTotal(v){v=Math.abs(v);
+  if(v>=1e9) return "$"+(v/1e9).toFixed(v>=1e10?0:1)+"B";
+  if(v>=1e6) return "$"+(v/1e6).toFixed(0)+"M";
+  return "$"+v.toFixed(0);}
+
+function render(){
+  svg.innerHTML="";
+  if(LOADING){
+    const a=el("text",{x:CX,y:CY,"text-anchor":"middle",fill:"var(--muted)","font-size":"18","font-weight":"600"}); a.textContent="Loading "+(VIEW==='sector'?SECTOR_NAME:currentPeriod)+"\u2026"; svg.appendChild(a);
+    return;
+  }
+  if(!current || !current.length){
+    const msg = currentPeriod==='Live'
+      ? "Waiting for the bot\u2019s first cycle\u2026"
+      : (PERIOD_ERR ? currentPeriod+" \u2014 "+PERIOD_ERR : currentPeriod+" \u2014 no data for this window");
+    const hint = currentPeriod==='Live'
+      ? "(the bot computes during US market sessions)"
+      : "tap the tab again to retry";
+    const a=el("text",{x:CX,y:CY-6,"text-anchor":"middle",fill:"var(--muted)","font-size":"20","font-weight":"600"}); a.textContent=msg; svg.appendChild(a);
+    const b=el("text",{x:CX,y:CY+22,"text-anchor":"middle",fill:"var(--muted)","font-size":"13"}); b.textContent=hint; svg.appendChild(b);
+    return;
+  }
+  const defs=el("defs");
+  [["mk-in","var(--in)"],["mk-out","var(--out)"]].forEach(([id,col])=>{
+    const m=el("marker",{id,viewBox:"0 0 10 10",refX:"7.5",refY:"5",markerWidth:"8",markerHeight:"8",orient:"auto-start-reverse"});
+    m.appendChild(el("path",{d:"M0,0 L10,5 L0,10 z",fill:col}));
+    defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  const rows=[...(VIEW==='sector'?SECTOR_DATA:current)].sort((a,b)=>b.flow-a.flow);
+  const n=rows.length;
+  const maxTotal=Math.max(...rows.map(r=>r.total));
+  // hub total: GICS sectors only in the market view (avoids double-counting the
+  // overlapping theme baskets); in a sector view it's the sum of its stocks.
+  let total = (VIEW==='sector')
+    ? rows.reduce((a,d)=>a+d.cash,0)
+    : (rows.some(d=>GICS.has(d.name)) ? rows.filter(d=>GICS.has(d.name)).reduce((a,d)=>a+d.cash,0)
+                                      : rows.reduce((a,d)=>a+d.cash,0));
+
+  rows.forEach((d,i)=>{
+    const ang=(-90 + i*(360/n))*Math.PI/180;
+    const dirx=Math.cos(ang), diry=Math.sin(ang);
+    const inflow=d.flow>=0;
+    const col=inflow?"var(--in)":"var(--out)";
+    const w=5 + Math.abs(d.flow)*20;                 // line thickness (unchanged)
+
+    // arrowhead: base size kept, growth-with-flow cut to ~60% of before
+    const hLen  = 26 + Math.abs(d.flow)*40;
+    const hHalf = 16 + Math.abs(d.flow)*22;
+
+    // end ball, sized by total money across the sector's stocks
+    const rb = 13 + Math.sqrt(d.total/maxTotal)*27;
+
+    const x0=CX+dirx*(HUBR+8),  y0=CY+diry*(HUBR+8); // hub edge
+    const nx=CX+dirx*R,         ny=CY+diry*R;        // ball centre
+    const bex=nx-dirx*rb,       bey=ny-diry*rb;      // ball edge (facing hub)
+
+    // tip is the pointed end; shaft stops at head base
+    const tipx=inflow?bex:x0, tipy=inflow?bey:y0;
+    const hx=inflow?dirx:-dirx, hy=inflow?diry:-diry;
+    const bcx=tipx-hx*hLen, bcy=tipy-hy*hLen;         // head base centre
+    const lineA=inflow?[x0,y0]:[bcx,bcy];
+    const lineB=inflow?[bcx,bcy]:[bex,bey];
+
+    const g=el("g",{class:"sector"});
+    g.dataset.i=i;
+    g.appendChild(el("title",{},)).textContent =
+      `${d.name} · total ≈ ${fmtCash(d.total).replace('+','')} across its stocks`;
+
+    // shaft
+    g.appendChild(el("line",{x1:lineA[0],y1:lineA[1],x2:lineB[0],y2:lineB[1],
+      stroke:col,"stroke-width":w,"stroke-opacity":.62,class:"arrow"}));
+    // custom head
+    const px=-hy, py=hx;
+    g.appendChild(el("polygon",{points:
+      `${tipx},${tipy} ${bcx+px*hHalf},${bcy+py*hHalf} ${bcx-px*hHalf},${bcy-py*hHalf}`,
+      fill:col,"fill-opacity":.9}));
+    // subtle animated flow dash along the shaft
+    const dash=el("line",{x1:lineA[0],y1:lineA[1],x2:lineB[0],y2:lineB[1],stroke:col,
+      "stroke-width":Math.max(1.5,w*0.30),class:"flow-dash","stroke-dasharray":"2 20"});
+    dash.appendChild(el("animate",{attributeName:"stroke-dashoffset",
+      from: inflow?"44":"0", to: inflow?"0":"44", dur:(2.2-Math.abs(d.flow)*1.1).toFixed(2)+"s",repeatCount:"indefinite"}));
+    g.appendChild(dash);
+
+    // end ball (size = total money in the sector)
+    g.appendChild(el("circle",{cx:nx,cy:ny,r:rb,fill:col,"fill-opacity":.16,
+      stroke:col,"stroke-width":2.5,"stroke-opacity":.85,class:"ball"}));
+    // total value inside the ball
+    const fs=Math.max(12,Math.min(19,rb*0.58));
+    const bv=el("text",{x:nx,y:ny+fs*0.34,class:"ball-val","text-anchor":"middle",
+      fill:col,"font-size":fs});
+    bv.textContent=fmtTotal(d.total);
+    g.appendChild(bv);
+
+    // both labels ride the arrow: flow ratio + net $
+    const mx=(x0+nx)/2, my=(y0+ny)/2;
+    let rot=ang*180/Math.PI; if(rot>90 || rot<-90) rot+=180;
+    const ppx=-diry, ppy=dirx;
+    const o1=w/2+11, o2=w/2+27;
+    const pctx=mx+ppx*o1, pcty=my+ppy*o1;
+    const cshx=mx+ppx*o2, cshy=my+ppy*o2;
+    const pct=el("text",{x:pctx,y:pcty,class:"flow-on-arrow","text-anchor":"middle",fill:col,
+      transform:`rotate(${rot} ${pctx} ${pcty})`});
+    pct.textContent=fmtFlow(d.flow);
+    const csh=el("text",{x:cshx,y:cshy,class:"cash-on-arrow","text-anchor":"middle",
+      transform:`rotate(${rot} ${cshx} ${cshy})`});
+    csh.textContent="≈ "+fmtCash(d.cash);
+    g.appendChild(pct); g.appendChild(csh);
+
+    // node name: just outside the ball
+    const right=dirx>=0;
+    const lx=CX+dirx*(R+rb+13), ly=CY+diry*(R+rb+13);
+    const anchor=Math.abs(dirx)<0.25 ? "middle" : (right?"start":"end");
+    const name=el("text",{x:lx,y:ly+(d.last!=null?-2:4),class:"node-name","text-anchor":anchor});
+    name.textContent=d.name;
+    g.appendChild(name);
+    if(d.last!=null){ const lp=el("text",{x:lx,y:ly+13,class:"node-cash","text-anchor":anchor}); lp.textContent="$"+d.last; g.appendChild(lp); }
+    if(d.mp!=null){ const mp=el("text",{x:lx,y:ly+25,class:"node-cash","text-anchor":anchor,fill:"var(--accent)"}); mp.textContent="MP $"+d.mp; g.appendChild(mp); }
+    if(VIEW==='main'){ g.style.cursor='pointer'; g.addEventListener('click',()=>openSector(d.name)); }
+
+    g.addEventListener('pointerenter',()=>{document.querySelectorAll('g.sector').forEach(s=>{if(s!==g)s.classList.add('dim');});});
+    g.addEventListener('pointerleave',()=>{document.querySelectorAll('g.sector').forEach(s=>s.classList.remove('dim'));});
+    svg.appendChild(g);
+  });
+
+  // hub
+  svg.appendChild(el("circle",{cx:CX,cy:CY,r:HUBR,class:"hub"}));
+  const t1=el("text",{x:CX,y:CY-24,class:"hub-lbl hub-title"}); t1.textContent=(VIEW==='sector'?SECTOR_NAME.toUpperCase()+" · NET FLOW":"MARKET · NET FLOW");
+  const val=el("text",{x:CX,y:CY+8,class:"hub-lbl hub-val",fill:total>=0?"var(--in)":"var(--out)"});
+  val.textContent=fmtCash(total);
+  const t2=el("text",{x:CX,y:CY+30,class:"hub-lbl hub-cap"}); t2.textContent=(VIEW==='sector'?"its stocks":"GICS sectors · money flow");
+  svg.appendChild(t1); svg.appendChild(val); svg.appendChild(t2);
+}
+
+/* theme toggle */
+const root=document.documentElement, btn=document.getElementById('themeBtn'), lbl=document.getElementById('themeLbl');
+function applyTheme(t){root.setAttribute('data-theme',t);
+  btn.firstChild.textContent = t==='dark' ? "🌙 " : "☀️ ";
+  lbl.textContent = t==='dark' ? "Dark" : "Light";
+  try{localStorage.setItem('flowmap-theme',t);}catch(e){}
+  render();
+}
+btn.addEventListener('click',()=>applyTheme(root.getAttribute('data-theme')==='dark'?'light':'dark'));
+let saved='dark'; try{saved=localStorage.getItem('flowmap-theme')||'dark';}catch(e){}
+
+// Protect Home Assistant's ingress view from mobile keyboard Back actions.
+// The extra same-page entry exists only while an input/select has focus.
+let inputGuard=false,cleaningGuard=false;
+const isEditor=e=>e&&e.matches&&e.matches('input,select,textarea');
+document.addEventListener('focusin',e=>{
+  if(isEditor(e.target)&&!inputGuard){history.pushState({inputGuard:true},'',location.href);inputGuard=true;}
+});
+document.addEventListener('focusout',()=>setTimeout(()=>{
+  if(inputGuard&&!isEditor(document.activeElement)){inputGuard=false;cleaningGuard=true;history.back();}
+},120));
+addEventListener('popstate',()=>{
+  if(cleaningGuard){cleaningGuard=false;return;}
+  if(inputGuard){inputGuard=false;if(isEditor(document.activeElement))document.activeElement.blur();}
+});
+async function boot(){
+  await loadSettings();
+  current=[];applyTheme(saved);buildPills();buildSectorPills();
+  setPeriod('1d');loadLive();loadEvents();loadActivity();
+  setInterval(loadLive,60000);setInterval(loadActivity,60000);setInterval(refreshCurrent,120000);setInterval(loadEvents,300000);
+}
+boot();
+</script>
+</body>
+</html>
++Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
 function renderPaperPending(j){const box=document.getElementById('paperPending'),rows=j.pending||[];if(j.account!=='auto'){box.innerHTML='';return}box.innerHTML=`<h3 style="padding:12px;margin:0">Pending buy confirmation</h3><table class="paper-table"><thead><tr><th>Ticker</th><th>Progress</th><th>Score</th><th>Rel. volume</th><th>First price</th><th>Current</th><th>Price move</th><th>Session / planned buy</th></tr></thead><tbody>${rows.map(p=>{const move=(Number(p.last_price)/Number(p.first_price)-1)*100;return `<tr><td><b>${escHtml(p.ticker)}</b></td><td>${p.confirmations} / ${p.required} scans</td><td>${Number(p.score).toFixed(1)}</td><td>${Number(p.rvol).toFixed(2)}×</td><td>${paperMoney(p.first_price)}</td><td>${paperMoney(p.last_price)}</td><td class="${move>=0?'positive':'negative'}">${move>=0?'+':''}${move.toFixed(2)}%</td><td>${escHtml(p.session)} · ${paperMoney(p.allocation)}</td></tr>`}).join('')||'<tr><td colspan="8">No signals awaiting confirmation.</td></tr>'}</tbody></table>`}
 async function loadPaper(){const account=document.getElementById('paperAccount').value;document.getElementById('manualOrder').hidden=account!=='manual';try{const r=await fetch('api/paper?account='+account,{cache:'no-store'}),j=await r.json();if(!r.ok)throw Error(j.error||'Unavailable');const rr=j.rules||{};document.getElementById('paperSummary').innerHTML=`<span>Equity<br><b>${paperMoney(j.equity)}</b></span><span>Cash<br><b>${paperMoney(j.cash)}</b></span><span>Market value<br><b>${paperMoney(j.market_value)}</b></span><span>Unrealised<br><b class="${j.unrealised>=0?'positive':'negative'}">${paperMoney(j.unrealised)}</b></span><span>Realised<br><b class="${j.realised>=0?'positive':'negative'}">${paperMoney(j.realised)}</b></span><span>Win rate<br><b>${j.win_rate==null?'—':j.win_rate+'%'}</b></span>`;document.getElementById('paperRules').innerHTML=`<label><input id="ruleEnabled" type="checkbox" ${rr.enabled?'checked':''}> Automatic strategy enabled</label><label>Buy score ≥<input id="ruleBuy" type="number" value="${rr.buy_score}"></label><label>Exit score ≤ (when profitable)<input id="ruleExit" type="number" value="${rr.score_exit}"></label><label>Regular-hours buy ($)<input id="ruleSize" type="number" value="${rr.position_size}"></label><label>Pre/after-hours buy ($)<input id="ruleExtendedSize" type="number" value="${rr.extended_hours_position_size}"></label><label>Maximum positions<input id="ruleMax" type="number" value="${rr.max_positions}"></label><label>Profit targets (%)<input id="ruleTargets" value="${(rr.targets||[]).join(', ')}"></label><label>Sell fractions (%)<input id="ruleFractions" value="${(rr.target_fractions||[]).map(x=>Math.round(x*10000)/100).join(', ')}"></label><label>Stop loss (%)<input id="ruleStop" type="number" value="${rr.stop_loss_pct}"></label><label>Trailing stop (%)<input id="ruleTrail" type="number" value="${rr.trailing_stop_pct}"></label><label>Re-entry cooldown (hours)<input id="ruleCooldown" type="number" value="${rr.reentry_cooldown_hours}"></label><button class="applybtn" id="saveRules">Save strategy rules</button><span id="ruleMessage"></span>`;document.getElementById('saveRules').onclick=savePaperRules;document.getElementById('paperPositions').innerHTML=`<table class="paper-table"><thead><tr><th>Ticker</th><th>Shares</th><th>Average buy</th><th>Current</th><th>Value</th><th>Return</th><th>Unrealised</th><th>Score</th></tr></thead><tbody>${(j.positions||[]).map(p=>`<tr><td><b>${escHtml(p.ticker)}</b></td><td>${Number(p.shares).toFixed(4)}</td><td>${paperMoney(p.avg_price)}</td><td>${paperMoney(p.current_price)}</td><td>${paperMoney(p.market_value)}</td><td class="${p.return_pct>=0?'positive':'negative'}">${p.return_pct>=0?'+':''}${p.return_pct}%</td><td class="${p.unrealised>=0?'positive':'negative'}">${paperMoney(p.unrealised)}</td><td>${p.score==null?'—':p.score}</td></tr>`).join('')||'<tr><td colspan="8">No open paper positions.</td></tr>'}</tbody></table>`;document.getElementById('paperEvents').innerHTML=`<h3 style="padding:12px;margin:0">Decision log</h3><table class="paper-table"><thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Shares</th><th>Price</th><th>Score</th><th>Reason</th><th>Realised</th></tr></thead><tbody>${(j.events||[]).map(e=>`<tr><td>${fmtTime(e.ts)}</td><td>${escHtml(e.ticker||'')}</td><td>${escHtml(e.side)}</td><td>${Number(e.shares||0).toFixed(4)}</td><td>${paperMoney(e.price)}</td><td>${e.score==null?'—':e.score}</td><td>${escHtml(e.reason)}</td><td>${paperMoney(e.realised)}</td></tr>`).join('')||'<tr><td colspan="8">No paper decisions yet.</td></tr>'}</tbody></table>`}catch(e){document.getElementById('paperSummary').textContent=e.message}}
 async function savePaperRules(){const payload={account:document.getElementById('paperAccount').value,enabled:document.getElementById('ruleEnabled').checked,buy_score:document.getElementById('ruleBuy').value,score_exit:document.getElementById('ruleExit').value,position_size:document.getElementById('ruleSize').value,extended_hours_position_size:document.getElementById('ruleExtendedSize').value,max_positions:document.getElementById('ruleMax').value,targets:document.getElementById('ruleTargets').value.split(',').map(Number),target_fractions:document.getElementById('ruleFractions').value.split(',').map(x=>Number(x)/100),stop_loss_pct:document.getElementById('ruleStop').value,trailing_stop_pct:document.getElementById('ruleTrail').value,reentry_cooldown_hours:document.getElementById('ruleCooldown').value};const r=await fetch('api/paper/rules',{method:'POST',headers:{'X-Flow-Request':'1','Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json();document.getElementById('ruleMessage').textContent=r.ok?'Saved':j.error||'Save failed';if(r.ok)loadPaper()}

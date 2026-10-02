@@ -195,11 +195,11 @@ def gdp():
 
 # title predicate -> fetcher (first match wins)
 MATCHERS = [
-    (lambda t: "core cpi" in t, core_cpi_mom),
+    (lambda t: "core cpi" in t and ("m/m" in t or "mom" in t), core_cpi_mom),
     (lambda t: "cpi" in t and ("y/y" in t or "yoy" in t), cpi_yoy),
     (lambda t: "cpi" in t, cpi_mom),
     (lambda t: "adp" not in t and any(k in t for k in ("non-farm", "nonfarm", "non farm", "payroll")), nfp),
-    (lambda t: any(k in t for k in ("fomc", "federal funds", "rate decision", "interest rate")), fomc_rate),
+    (lambda t: any(k in t for k in ("federal funds rate", "rate decision", "interest rate decision")), fomc_rate),
     (lambda t: "core pce" in t, core_pce_mom),
     (lambda t: "pce" in t, pce_mom),
     (lambda t: "gdp" in t and "price" not in t, gdp),

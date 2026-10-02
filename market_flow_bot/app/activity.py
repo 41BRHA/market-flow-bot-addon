@@ -3,7 +3,9 @@
 The stock calculation is deliberately provider-neutral and uses the 5-minute
 bars already downloaded by Market Flow.  Volume is compared with previous
 sessions at the *same point in the trading day*; comparing a partial day with a
-full-day average would create false alerts every morning.
+full-day average would create false alerts every morning.  When history permits,
+the relative-volume score blends robust 5-, 20- and 40-session medians so one
+abnormal day cannot dominate the signal.
 
 Yahoo option chains are sampled only for the strongest stock candidates by a
 slow background worker.  They are snapshots, not an OPRA trade feed, so the
@@ -41,43 +43,78 @@ def _clamp(value, low=0.0, high=100.0):
     return max(low, min(high, value))
 
 
-def stock_activity(symbol, df) -> dict | None:
+def _horizon_ratio(current: float, values: list[float], sessions: int) -> float | None:
+    """Current volume / same-time median for the requested trailing horizon."""
+    sample = values[-sessions:]
+    if not sample:
+        return None
+    baseline = float(np.nanmedian(sample))
+    return current / baseline if baseline > 0 else None
+
+
+def _blend_ratios(ratios: list[tuple[float | None, float]]) -> float:
+    """Weighted geometric mean, redistributing weight across available history."""
+    available = [(ratio, weight) for ratio, weight in ratios if ratio is not None and ratio > 0]
+    if not available:
+        return 0.0
+    total_weight = sum(weight for _, weight in available)
+    return math.exp(sum((weight / total_weight) * math.log(ratio)
+                        for ratio, weight in available))
+
+
+def stock_activity(symbol, df, now=None) -> dict | None:
     """Score one stock from intraday bars; return None for insufficient data."""
     if df is None or len(df) < 12 or "volume" not in df or "close" not in df:
         return None
     work = df.copy().sort_index()
+    work = work[~work.index.duplicated(keep="last")]
+    now = now or datetime.now(timezone.utc)
     try:
         idx = work.index.tz_convert(ET) if work.index.tz is not None else work.index.tz_localize("UTC").tz_convert(ET)
     except Exception:  # noqa: BLE001
         return None
-    minutes = np.array([v.hour * 60 + v.minute for v in idx])
+    # Bar timestamps are starts. Never score the currently forming 5m bar.
+    complete = np.array([(now-v.astimezone(timezone.utc)).total_seconds() >= 300 for v in idx])
+    work = work.iloc[np.flatnonzero(complete)]
+    idx = idx[complete]
+    if len(work)<6: return None
+    minutes = np.array([v.hour*60+v.minute for v in idx])
     dates = np.array([v.date() for v in idx])
-    regular = (minutes >= 570) & (minutes <= 960)
-    if not regular.any():
-        return None
-    today = dates[np.flatnonzero(regular)[-1]]
-    current_idx = np.flatnonzero(regular & (dates == today))
-    if len(current_idx) < 3:
-        return None
-    current_minute = int(minutes[current_idx[-1]])
-    volume = work["volume"].to_numpy(dtype=float)
-    close = work["close"].to_numpy(dtype=float)
-
-    current_volume = float(np.nansum(volume[current_idx]))
-    baselines, burst_baselines = [], []
-    for day in sorted(set(dates[regular & (dates < today)]))[-4:]:
-        comparable = np.flatnonzero(regular & (dates == day) & (minutes <= current_minute))
-        if len(comparable) >= 3:
-            baselines.append(float(np.nansum(volume[comparable])))
-            burst_baselines.append(float(np.nansum(volume[comparable[-3:]])))
-    if not baselines or np.nanmean(baselines) <= 0:
-        return None
-
-    recent = float(np.nansum(volume[current_idx[-3:]]))
-    previous = float(np.nansum(volume[current_idx[-6:-3]])) if len(current_idx) >= 6 else 0.0
-    rvol = current_volume / float(np.nanmean(baselines))
-    burst = recent / max(1.0, float(np.nanmean(burst_baselines)))
-    acceleration = recent / max(1.0, previous)
+    latest_minute=int(minutes[-1])
+    if 240<=latest_minute<570: start,end,session=240,570,"premarket"
+    elif 570<=latest_minute<960: start,end,session=570,960,"regular"
+    elif 960<=latest_minute<1200: start,end,session=960,1200,"postmarket"
+    else: return None
+    selected=(minutes>=start)&(minutes<end)
+    regular=(minutes>=570)&(minutes<960)
+    today=dates[-1]
+    current_idx=np.flatnonzero(selected&(dates==today))
+    if len(current_idx)<3:return None
+    current_minute=int(minutes[current_idx[-1]])
+    volume=work["volume"].to_numpy(dtype=float)
+    close=work["close"].to_numpy(dtype=float)
+    expected=np.arange(start,current_minute+1,5)
+    if not np.array_equal(minutes[current_idx],expected):return None
+    if not np.all(np.isfinite(volume[current_idx])&(volume[current_idx]>=0)):return None
+    if not np.all(np.isfinite(close[current_idx])&(close[current_idx]>0)):return None
+    current_volume=float(np.sum(volume[current_idx]))
+    baselines,burst_baselines=[],[]
+    for day in sorted(set(dates[selected&(dates<today)]))[-40:]:
+        comparable=np.flatnonzero(selected&(dates==day)&(minutes<=current_minute))
+        if not np.array_equal(minutes[comparable],expected):continue
+        values=volume[comparable]
+        if not np.all(np.isfinite(values)&(values>=0)) or np.sum(values)<=0:continue
+        baselines.append(float(np.sum(values)))
+        burst_baselines.append(float(np.sum(values[-3:])))
+    if not baselines:return None
+    recent=float(np.sum(volume[current_idx[-3:]]))
+    previous=float(np.sum(volume[current_idx[-6:-3]])) if len(current_idx)>=6 else 0.0
+    rvol_5d=_horizon_ratio(current_volume,baselines,5)
+    rvol_20d=_horizon_ratio(current_volume,baselines,20) if len(baselines)>=20 else None
+    rvol_40d=_horizon_ratio(current_volume,baselines,40) if len(baselines)>=40 else None
+    rvol=_blend_ratios([(rvol_5d,.25),(rvol_20d,.50),(rvol_40d,.25)])
+    burst=recent/float(np.median(burst_baselines[-20:])) if np.median(burst_baselines[-20:])>0 else 0.0
+    acceleration=recent/previous if previous>0 else 0.0
 
     previous_days = np.flatnonzero(regular & (dates < today))
     if not len(previous_days):
@@ -103,8 +140,13 @@ def stock_activity(symbol, df) -> dict | None:
     )
     aligned = 1 if change > 0.15 and flow > 0.03 else -1 if change < -0.15 and flow < -0.03 else 0
     return {
-        "ticker": symbol, "price": round(last, 4), "change_pct": round(change, 2),
-        "rvol": round(rvol, 2), "burst_ratio": round(burst, 2),
+        "session": session, "ticker": symbol, "price": round(last, 4), "change_pct": round(change, 2),
+        "rvol": round(rvol, 2),
+        "rvol_5d": round(rvol_5d, 2) if rvol_5d is not None else None,
+        "rvol_20d": round(rvol_20d, 2) if rvol_20d is not None else None,
+        "rvol_40d": round(rvol_40d, 2) if rvol_40d is not None else None,
+        "volume_baseline_sessions": len(baselines),
+        "burst_ratio": round(burst, 2),
         "acceleration": round(acceleration, 2), "flow": round(float(flow), 3),
         "volume": round(current_volume), "dollar_volume": round(dollar_volume),
         "stock_score": round(_clamp(unusual), 1), "direction": aligned,
@@ -116,19 +158,23 @@ def combine_score(row: dict, option: dict | None = None) -> dict:
     """Attach options confirmation and a conservative opportunity label."""
     out = dict(row)
     option = option or {}
+    try:
+        age=time.time()-datetime.fromisoformat(str(option.get("asof","")).replace("Z","+00:00")).timestamp()
+        if not 0<=age<=3600 or _finite(option.get("total_volume"))<=0: option={}
+    except (ValueError,TypeError,OverflowError): option={}
     call_put = _finite(option.get("call_put_volume_ratio"))
     option_score = _finite(option.get("score"))
     direction = int(out.get("direction") or 0)
     confirm = 0.0
     if direction > 0 and call_put >= 1.3:
         confirm = min(15.0, option_score * 0.15)
-    elif direction < 0 and 0 < call_put <= 0.77:
+    elif direction < 0 and option and 0 <= call_put <= 0.77:
         confirm = min(15.0, option_score * 0.15)
     stock_score = _finite(out.get("stock_score"))
     combined = _clamp(stock_score + confirm)
     # A strong opposite options skew is a caution, never enough by itself to
     # reverse the stock signal (multi-leg hedges are common).
-    if option_score and ((direction > 0 and 0 < call_put < 0.67) or
+    if option_score and ((direction > 0 and option and 0 <= call_put < 0.67) or
                          (direction < 0 and call_put > 1.5)):
         combined = _clamp(combined - min(10.0, option_score * 0.10))
     if direction > 0:
@@ -206,7 +252,8 @@ class OptionsActivityWorker:
                     with self._lock:
                         previous = self.data.get(symbol) or {}
                         prior_total = _finite(previous.get("total_volume"))
-                        same_day = str(previous.get("asof") or "")[:10] == str(result.get("asof") or "")[:10]
+                        same_day = (str(previous.get("asof") or "")[:10] == str(result.get("asof") or "")[:10]
+                                    and previous.get("expiries") == result.get("expiries"))
                         change = max(0.0, result["total_volume"] - prior_total) if prior_total and same_day else None
                         result["volume_change"] = change
                         result["rising_volume_pct"] = (change / prior_total) if change is not None and prior_total else None
@@ -244,6 +291,8 @@ class OptionsActivityWorker:
                 else:
                     puts_volume += volume; puts_oi += oi; put_premium += premium
         total = calls_volume + puts_volume
+        if total <= 0 or calls_oi+puts_oi <= 0:
+            return None
         ratio = calls_volume / max(1.0, puts_volume)
         volume_oi = total / max(1.0, calls_oi + puts_oi)
         imbalance = max(ratio, 1.0 / max(0.01, ratio))

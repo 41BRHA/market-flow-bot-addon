@@ -41,7 +41,7 @@ class InvestorTests(unittest.TestCase):
     def test_amendment_compares_with_prior_quarter(self):
         self.store.save_filing(self.filing('a','2026-05-15','2026-03-31'), [{**self.row,'shares':4000}])
         self.store.save_filing(self.filing('b','2026-08-14','2026-06-30'), [self.row])
-        self.store.save_filing(self.filing('c','2026-08-20','2026-06-30','13F-HR/A'), [{**self.row,'shares':6000}])
+        self.store.save_filing({**self.filing('c','2026-08-20','2026-06-30','13F-HR/A'), 'amendment_type':'RESTATEMENT'}, [{**self.row,'shares':6000}])
         data=self.store.comparison(self.manager['cik'])
         self.assertEqual(data['previous']['report_period'],'2026-03-31')
         self.assertEqual(data['holdings'][0]['share_change'],2000)
