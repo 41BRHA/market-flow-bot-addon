@@ -99,3 +99,12 @@ def test_price_cache_survives_tracker_restart(tmp_path):
     assert row['estimated_price']==25
     assert row['current_price']==30
     assert row['directional_return_pct']==20
+
+def test_flow_map_is_one_complete_html_document():
+    page=(Path(__file__).parents[1]/'market_flow_bot/app/flow_map.html').read_text()
+    lower=page.lower()
+    assert lower.count('<!doctype html>')==1
+    assert lower.count('<script>')==1
+    assert lower.count('</script>')==1
+    assert lower.count('</html>')==1
+    assert not page[lower.index('</html>')+len('</html>'):].strip()

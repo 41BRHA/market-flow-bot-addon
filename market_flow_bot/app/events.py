@@ -129,9 +129,10 @@ def refresh():
     return payload
 
 
-def enrich_actuals() -> bool:
+def enrich_actuals(force=False) -> bool:
     """Fill 'actual' on cached events from government sources (best-effort)."""
     from . import actuals
+    if force:actuals.clear_cache()
     data = load()
     evs = data.get("events") or []
     if not evs:

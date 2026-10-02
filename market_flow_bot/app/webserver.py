@@ -162,7 +162,7 @@ class _Handler(BaseHTTPRequestHandler):
             if (parse_qs(parsed.query).get("refresh") or [None])[0]:
                 try:                       # manual refresh button -> re-pull now
                     _ev.refresh()
-                    changed=_ev.enrich_actuals()
+                    changed=_ev.enrich_actuals(force=True)
                     log.info("manual events refresh complete; actual values changed=%s",changed)
                 except Exception as exc:   # noqa: BLE001 - serve last cache on failure
                     log.warning("manual events refresh failed: %s", exc)

@@ -32,11 +32,19 @@ FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
 FED_RSS = "https://www.federalreserve.gov/feeds/press_monetary.xml"
 BEA_GDP = "https://www.bea.gov/data/gdp/gross-domestic-product"
 BEA_PCE = "https://www.bea.gov/data/income-saving/personal-income"
+_SOURCE_CACHE = {}
+CACHE_SECONDS = 15 * 60
+
+def clear_cache():
+    """Let an explicit manual refresh bypass the short API-protection cache."""
+    _SOURCE_CACHE.clear()
 
 
 # ---- source fetchers -------------------------------------------------------
 def _bls_series(series_id: str):
     """Return recent [(year, month_int, value_float)] newest-first, or []."""
+    cached=_SOURCE_CACHE.get(('bls',series_id))
+    if cached and (datetime.now(timezone.utc).timestamp()-cached[0])<CACHE_SECONDS:return cached[1]
     try:
         r = requests.get(BLS_V1.format(sid=series_id), timeout=20, headers=UA)
         r.raise_for_status()
@@ -47,7 +55,10 @@ def _bls_series(series_id: str):
             if not per.startswith("M"):
                 continue
             out.append((int(d["year"]), int(per[1:]), float(d["value"])))
-        return out  # BLS returns newest-first already
+        out=[x for x in out if 1 <= x[1] <= 12]
+        out.sort(reverse=True)
+        _SOURCE_CACHE[('bls',series_id)]=(datetime.now(timezone.utc).timestamp(),out)
+        return out
     except Exception as exc:  # noqa: BLE001
         log.warning("BLS %s failed: %s", series_id, exc)
         return []
@@ -55,6 +66,8 @@ def _bls_series(series_id: str):
 
 def _fred_series(series_id: str):
     """Return [(date, value_float)] oldest-first from FRED graph CSV, or []."""
+    cached=_SOURCE_CACHE.get(('fred',series_id))
+    if cached and (datetime.now(timezone.utc).timestamp()-cached[0])<CACHE_SECONDS:return cached[1]
     try:
         r = requests.get(FRED_CSV.format(sid=series_id), timeout=20, headers=UA)
         r.raise_for_status()
@@ -67,6 +80,8 @@ def _fred_series(series_id: str):
                 out.append((row[0], float(row[1])))
             except ValueError:
                 continue
+        out.sort(key=lambda x:x[0])
+        _SOURCE_CACHE[('fred',series_id)]=(datetime.now(timezone.utc).timestamp(),out)
         return out
     except Exception as exc:  # noqa: BLE001
         log.warning("FRED %s failed: %s", series_id, exc)
@@ -117,40 +132,59 @@ def _fresh_fred(series, max_days=MONTHLY_MAX_DAYS) -> bool:
 
 # ---- per-event actuals -----------------------------------------------------
 def _mom(series):
-    return None if len(series) < 2 else (series[0][2] / series[1][2] - 1) * 100
+    return None if len(series) < 2 or not series[1][2] else (series[0][2] / series[1][2] - 1) * 100
 
 def _yoy(series):
-    return None if len(series) < 13 else (series[0][2] / series[12][2] - 1) * 100
+    return None if len(series) < 13 or not series[12][2] else (series[0][2] / series[12][2] - 1) * 100
 
-def cpi_mom():
+def _previous_month(when):
+    when=when or datetime.now(timezone.utc)
+    year,month=when.year,when.month-1
+    return (year-1,12) if month==0 else (year,month)
+
+def _bls_period_ready(series,when):
+    return bool(series) and (series[0][0],series[0][1])==_previous_month(when)
+
+def cpi_mom(when=None):
     s = _bls_series("CUSR0000SA0")                 # CPI-U, seasonally adjusted
-    if not _fresh_bls(s):
+    if not _fresh_bls(s) or (when and not _bls_period_ready(s,when)):
         return None
     v = _mom(s)
     return None if v is None else f"{v:+.1f}% MoM"
 
-def cpi_yoy():
+def cpi_yoy(when=None):
     s = _bls_series("CUUR0000SA0")                 # CPI-U, NSA (YoY basis)
-    if not _fresh_bls(s):
+    if not _fresh_bls(s) or (when and not _bls_period_ready(s,when)):
         return None
     v = _yoy(s)
     return None if v is None else f"{v:.1f}% YoY"
 
-def core_cpi_mom():
+def core_cpi_mom(when=None):
     s = _bls_series("CUSR0000SA0L1E")               # Core CPI SA
-    if not _fresh_bls(s):
+    if not _fresh_bls(s) or (when and not _bls_period_ready(s,when)):
         return None
     v = _mom(s)
     return None if v is None else f"{v:+.1f}% MoM"
 
-def nfp():
+def nfp(when=None):
     s = _bls_series("CES0000000001")               # Total nonfarm payrolls (level, thousands)
-    if len(s) < 2 or not _fresh_bls(s):
+    if len(s) < 2 or not _fresh_bls(s) or (when and not _bls_period_ready(s,when)):
         return None
     chg = (s[0][2] - s[1][2]) * 1000
     return f"{chg:+,.0f}"
 
-def fomc_rate():
+def unemployment_rate(when=None):
+    s=_bls_series("LNS14000000")
+    if not _fresh_bls(s) or (when and not _bls_period_ready(s,when)):return None
+    return f"{s[0][2]:.1f}%"
+
+def average_hourly_earnings_mom(when=None):
+    s=_bls_series("CES0500000003")
+    if len(s)<2 or not _fresh_bls(s) or (when and not _bls_period_ready(s,when)):return None
+    value=_mom(s)
+    return None if value is None else f"{value:+.1f}% MoM"
+
+def fomc_rate(when=None):
     try:
         rss = requests.get(FED_RSS, timeout=20, headers=UA).text
         m = re.search(r"https?://[^\s<]+(?:monetary|pressreleases)[^\s<]+\.htm", rss)
@@ -165,32 +199,46 @@ def fomc_rate():
         log.warning("FOMC fetch failed: %s", exc)
         return None
 
-def _fred_mom(sid):
+def _fred_mom(sid,when=None):
     s = _fred_series(sid)
     if len(s) < 2 or not _fresh_fred(s):
         return None
+    if when:
+        newest=date.fromisoformat(s[-1][0])
+        if (newest.year,newest.month)!=_previous_month(when):return None
     return (s[-1][1] / s[-2][1] - 1) * 100
 
-def pce_mom():
-    text=_bea_text(BEA_PCE)
-    v=_signed_percent(text,r"From the preceding month, the PCE price index[^.]*?\b(increased|decreased)\s+([\d.]+)\s+percent")
-    if v is None:v = _fred_mom("PCEPI")
+def pce_mom(when=None):
+    v=_fred_mom("PCEPI",when)
+    if v is None and when is None:
+        text=_bea_text(BEA_PCE);v=_signed_percent(text,r"From the preceding month, the PCE price index[^.]*?\b(increased|decreased)\s+([\d.]+)\s+percent")
     return None if v is None else f"{v:+.1f}% MoM"
 
-def core_pce_mom():
-    text=_bea_text(BEA_PCE)
-    v=_signed_percent(text,r"Excluding food and energy, the PCE price index[^.]*?\b(increased|decreased)\s+([\d.]+)\s+percent")
-    if v is None:v = _fred_mom("PCEPILFE")
+def core_pce_mom(when=None):
+    v=_fred_mom("PCEPILFE",when)
+    if v is None and when is None:
+        text=_bea_text(BEA_PCE);v=_signed_percent(text,r"Excluding food and energy, the PCE price index[^.]*?\b(increased|decreased)\s+([\d.]+)\s+percent")
     return None if v is None else f"{v:+.1f}% MoM"
 
-def gdp():
-    text=_bea_text(BEA_GDP)
-    v=_signed_percent(text,r"real gross domestic product[^.]*?\b(increased|decreased)\s+at an annual rate of\s+([\d.]+)\s+percent")
-    if v is not None:return f"{v:+.1f}% (annualised)"
+def gdp(when=None):
     s = _fred_series("A191RL1Q225SBEA")             # real GDP, annualised QoQ %
     if not s or not _fresh_fred(s, QUARTERLY_MAX_DAYS):
         return None
+    if when:
+        event_quarter=(when.month-1)//3
+        target_year=when.year if event_quarter else when.year-1
+        target_quarter=(event_quarter-1)%4
+        target_month=target_quarter*3+1
+        newest=date.fromisoformat(s[-1][0])
+        if (newest.year,newest.month)!=(target_year,target_month):return None
     return f"{s[-1][1]:+.1f}% (annualised)"
+
+def factory_orders_mom(when=None):
+    # Census M3 total manufacturing new orders, seasonally adjusted, via FRED.
+    s=_fred_series("AMTMNO")
+    if len(s)<2 or not _fresh_fred(s):return None
+    value=(s[-1][1]/s[-2][1]-1)*100 if s[-2][1] else None
+    return None if value is None else f"{value:+.1f}% MoM"
 
 
 # title predicate -> fetcher (first match wins)
@@ -199,6 +247,9 @@ MATCHERS = [
     (lambda t: "cpi" in t and ("y/y" in t or "yoy" in t), cpi_yoy),
     (lambda t: "cpi" in t, cpi_mom),
     (lambda t: "adp" not in t and any(k in t for k in ("non-farm", "nonfarm", "non farm", "payroll")), nfp),
+    (lambda t: "unemployment rate" in t, unemployment_rate),
+    (lambda t: "average hourly earnings" in t, average_hourly_earnings_mom),
+    (lambda t: "factory orders" in t and ("m/m" in t or "mom" in t), factory_orders_mom),
     (lambda t: any(k in t for k in ("federal funds rate", "rate decision", "interest rate decision")), fomc_rate),
     (lambda t: "core pce" in t, core_pce_mom),
     (lambda t: "pce" in t, pce_mom),
@@ -206,15 +257,20 @@ MATCHERS = [
 ]
 
 
-def actual_for(title: str):
+def matcher_for(title: str):
     t = title.lower()
     for pred, fn in MATCHERS:
         if pred(t):
-            try:
-                return fn()
-            except Exception as exc:  # noqa: BLE001
-                log.warning("actual fetch for %r failed: %s", title, exc)
-                return None
+            return fn
+    return None
+
+def actual_for(title: str, when=None):
+    fn=matcher_for(title)
+    if fn:
+        try:return fn(when)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("actual fetch for %r failed: %s", title, exc)
+            return None
     return None
 
 
@@ -227,19 +283,28 @@ def enrich(events: list[dict], within_hours: float = 24 * 8) -> bool:
     now = datetime.now(timezone.utc)
     changed = False
     for ev in events:
-        if ev.get("actual") or not ev.get("datetime_utc"):
+        if not ev.get("datetime_utc"):
             continue
         try:
             when = datetime.fromisoformat(ev["datetime_utc"])
         except Exception:
             continue
         age_h = (now - when).total_seconds() / 3600.0
+        if ev.get("actual"):
+            ev["actual_status"]="published";continue
+        fn=matcher_for(ev.get("title", ""))
+        if age_h < 0:
+            ev["actual_status"]="scheduled";continue
+        if fn is None:
+            ev["actual_status"]="unsupported";continue
+        ev["actual_status"]="checking"
         if 0 <= age_h <= within_hours:
-            val = actual_for(ev.get("title", ""))
+            val = actual_for(ev.get("title", ""),when)
             if val:
                 ev["actual"] = val
                 ev["actual_at"] = now.isoformat(timespec="seconds")
                 ev["actual_source"] = "official government release"
+                ev["actual_status"] = "published"
                 changed = True
                 log.info("actual filled: %s = %s", ev["title"], val)
     return changed
