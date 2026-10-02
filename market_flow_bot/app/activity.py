@@ -93,22 +93,30 @@ def stock_activity(symbol, df, now=None) -> dict | None:
     current_minute=int(minutes[current_idx[-1]])
     volume=work["volume"].to_numpy(dtype=float)
     close=work["close"].to_numpy(dtype=float)
-    expected=np.arange(start,current_minute+1,5)
-    if not np.array_equal(minutes[current_idx],expected):return None
     if not np.all(np.isfinite(volume[current_idx])&(volume[current_idx]>=0)):return None
     if not np.all(np.isfinite(close[current_idx])&(close[current_idx]>0)):return None
     current_volume=float(np.sum(volume[current_idx]))
     baselines,burst_baselines=[],[]
     for day in sorted(set(dates[selected&(dates<today)]))[-40:]:
         comparable=np.flatnonzero(selected&(dates==day)&(minutes<=current_minute))
-        if not np.array_equal(minutes[comparable],expected):continue
+        # Extended-hours feeds legitimately omit five-minute slots in which no
+        # trade occurred.  Those gaps mean zero volume, not corrupt data.  The
+        # old full-grid equality check consequently rejected almost every stock
+        # during quiet pre-market trading.
+        if len(comparable)<3:continue
         values=volume[comparable]
         if not np.all(np.isfinite(values)&(values>=0)) or np.sum(values)<=0:continue
         baselines.append(float(np.sum(values)))
-        burst_baselines.append(float(np.sum(values[-3:])))
+        burst_idx=comparable[minutes[comparable]>current_minute-15]
+        burst_baselines.append(float(np.sum(volume[burst_idx])))
     if not baselines:return None
-    recent=float(np.sum(volume[current_idx[-3:]]))
-    previous=float(np.sum(volume[current_idx[-6:-3]])) if len(current_idx)>=6 else 0.0
+    # Use clock windows rather than the last three *reported* rows.  With sparse
+    # pre/post-market bars, the last three rows can span hours rather than 15m.
+    recent_idx=current_idx[minutes[current_idx]>current_minute-15]
+    previous_idx=current_idx[(minutes[current_idx]>current_minute-30)&
+                             (minutes[current_idx]<=current_minute-15)]
+    recent=float(np.sum(volume[recent_idx]))
+    previous=float(np.sum(volume[previous_idx]))
     rvol_5d=_horizon_ratio(current_volume,baselines,5)
     rvol_20d=_horizon_ratio(current_volume,baselines,20) if len(baselines)>=20 else None
     rvol_40d=_horizon_ratio(current_volume,baselines,40) if len(baselines)>=40 else None

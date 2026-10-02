@@ -50,6 +50,16 @@ def test_missing_quote_does_not_fake_zero_return(tmp_path):
     assert snap['positions'][0]['return_pct'] is None
     assert snap['cash']==97000
 
+def test_previous_close_values_position_without_enabling_stale_fill(tmp_path):
+    ledger=PaperLedger(str(tmp_path/'p.db'))
+    ledger.manual_trade({'ticker':'ABC','side':'buy','amount':3000,'price':100})
+    now=NOW+timedelta(days=1)
+    quote={'ABC':{'ticker':'ABC','price':105,'asof':NOW.isoformat()}}
+    snap=ledger.snapshot('manual',quote,now=now)
+    assert snap['market_value']==3150
+    assert snap['positions'][0]['return_pct']==5
+    assert snap['positions'][0]['price_status']=='Last available close'
+
 def test_realised_uses_entire_history(tmp_path):
     ledger=PaperLedger(str(tmp_path/'p.db'))
     for _ in range(160):

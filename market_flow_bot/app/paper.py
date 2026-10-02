@@ -58,6 +58,23 @@ def fresh_quote(row, now=None):
         return False
 
 
+def valuation_quote(row, now=None):
+    """Allow the latest market close for display, never for simulated fills.
+
+    Many shares do not print a pre-market trade.  Their last valid bar is then
+    yesterday's close: useful for portfolio valuation, but not fresh enough to
+    execute an automatic paper order.
+    """
+    now = now or datetime.now(timezone.utc)
+    stamp = _stamp(row.get("asof"))
+    try:
+        price = float(row.get("price"))
+        age = (now-stamp).total_seconds() if stamp is not None else -1
+        return stamp is not None and math.isfinite(price) and price > 0 and 0 <= age <= 7*86400
+    except (TypeError, ValueError):
+        return False
+
+
 def _number(value, name, low=0.0, high=1e12):
     try:
         value = float(value)
@@ -365,12 +382,13 @@ class PaperLedger:
         unrealised=0.0; market_value=0.0; missing=0
         for pos in positions:
             quote=prices.get(pos["ticker"],{})
-            if not fresh_quote(quote,now):
+            if not valuation_quote(quote,now):
                 pos.update(current_price=None,market_value=None,unrealised=None,return_pct=None,price_status="Missing or stale quote")
                 missing+=1
                 continue
             current=float(quote["price"])
-            pos["price_status"]="Fresh delayed quote"
+            pos["price_status"]=("Fresh delayed quote" if fresh_quote(quote,now)
+                                 else "Last available close")
             value=current*pos["shares"]; pnl=(current-pos["avg_price"])*pos["shares"]
             pos.update(current_price=current,market_value=round(value,2),unrealised=round(pnl,2),
                        return_pct=round((current/pos["avg_price"]-1)*100,2))
